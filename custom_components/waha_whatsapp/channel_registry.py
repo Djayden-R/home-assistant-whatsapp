@@ -158,7 +158,7 @@ class ChannelRegistry:
                 pending_managed_route = (
                     isinstance(conversation_id, str)
                     and re.fullmatch(
-                        r"(?:group_conversation|guest_direct)_[0-9a-f]{32}",
+                        r"(?:group_conversation|guest_direct|general_group)_[0-9a-f]{32}",
                         conversation_id,
                     )
                     is not None
@@ -265,6 +265,10 @@ class ChannelRegistry:
             raise ValueError("WAHA message ID is missing")
         return self._token("message", canonical_message_id(raw_id), "msg")
 
+    def opaque_id(self, purpose: str, value: str, prefix: str) -> str:
+        """Derive a connection-scoped public identifier without exposing routing."""
+        return self._token(purpose, value, prefix)
+
     def event_token(self, raw_event_id: str) -> str:
         """Create a stable public event ID without exposing the WAHA ID."""
         if not isinstance(raw_event_id, str) or not raw_event_id:
@@ -291,7 +295,7 @@ class ChannelRegistry:
                 )
                 self._prune(now)
                 await self._save()
-            except Exception:
+            except Exception, asyncio.CancelledError:
                 self._messages = previous_messages
                 self._events = previous_events
                 raise
@@ -332,7 +336,7 @@ class ChannelRegistry:
                 self._prune(now)
                 await self._save()
                 return True
-            except Exception:
+            except Exception, asyncio.CancelledError:
                 self._messages = previous_messages
                 self._events = previous_events
                 raise

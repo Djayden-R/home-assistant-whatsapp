@@ -16,6 +16,8 @@ TO_REDACT = {
     CONF_WEBHOOK_ID,
     CONF_WEBHOOK_SECRET,
     "account_id",
+    "group_id",
+    "bot_account",
 }
 
 
@@ -46,6 +48,8 @@ async def async_get_config_entry_diagnostics(
             ),
             "webhook_configured": True,
         },
+        "outbound_observations": _outbound_snapshot(entry),
+        "correlated_sends": entry.runtime_data.correlated_sends.diagnostics,
         "managed_guest_group": {
             "ready": guest["ready"],
             "confirmed": guest["confirmed"],
@@ -78,3 +82,25 @@ async def async_get_config_entry_diagnostics(
             for subentry in entry.subentries.values()
         ],
     }
+
+
+def _outbound_snapshot(entry: WahaConfigEntry) -> dict[str, Any]:
+    """Observer diagnostics never prevent downloading other diagnostics."""
+    try:
+        snapshot = entry.runtime_data.outbound_observer.snapshot()
+        # Diagnostics must remain safe even for a broken observer implementation.
+        return {
+            "enabled": snapshot.get("enabled") is True,
+            "health": (
+                snapshot["health"]
+                if snapshot.get("health") in {"ready", "degraded", "unavailable"}
+                else "degraded"
+            ),
+            **{
+                key: value if type(value) is int and value >= 0 else 0
+                for key in ("observed", "observation_failures", "tracking_failures")
+                for value in (snapshot.get(key),)
+            },
+        }
+    except Exception:
+        return {"enabled": False, "health": "unavailable"}

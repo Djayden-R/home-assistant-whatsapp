@@ -432,3 +432,27 @@ async def test_unknown_conversation_cannot_be_remembered(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="Unknown WAHA conversation"):
         await registry.async_remember_message("ABCDEF", "direct_fake")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_tracking_save_rolls_back_volatile_quote(monkeypatch):
+    """Observer timeouts cannot leave an unpersisted quote usable in memory."""
+    import asyncio
+
+    class CancelledStore(FakeStore):
+        async def async_save(self, data):
+            raise asyncio.CancelledError
+
+    registry = make_registry(monkeypatch, store=CancelledStore())
+    contact = await registry.async_resolve_chat("393331234567@c.us")
+    with pytest.raises(asyncio.CancelledError):
+        await registry.async_remember_message("cancelled", contact.conversation_id)
+    assert (
+        registry.resolve_message(
+            registry.message_token("cancelled"), contact.conversation_id
+        )
+        is None
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await registry.async_claim_event("cancelled-event")
+    assert registry._events == {}

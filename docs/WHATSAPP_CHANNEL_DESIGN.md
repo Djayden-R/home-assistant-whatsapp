@@ -12,6 +12,10 @@ explicitly registered private-chat slash commands and emits
 `command.requested` without executing an action; see the
 [command guide](COMMANDS.md).
 
+The additive 1.7.0 implementation is documented in the [communication API](CHANNEL_API.md),
+including outbound observations, keyed sends, and explicit general groups.
+Those current contracts supersede the earlier group proposals below.
+
 ## Why this exists
 
 Today the integration sends individual notifications and actionable polls. The

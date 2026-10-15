@@ -1,0 +1,166 @@
+{
+  "outbound_text": {
+    "schema_version": 1,
+    "config_entry_id": "entry_example",
+    "conversation_id": "direct_example",
+    "conversation_type": "direct",
+    "occurred_at": "2026-10-15T10:00:00+00:00",
+    "event_id": "evt_outbound_example",
+    "type": "message.outbound",
+    "origin": "automation",
+    "client_request_id": null,
+    "status": "accepted",
+    "message": {
+      "id": "msg_example",
+      "kind": "text",
+      "text": "The washing machine has finished.",
+      "in_reply_to": null
+    }
+  },
+  "outbound_poll": {
+    "schema_version": 1,
+    "config_entry_id": "entry_example",
+    "conversation_id": "direct_example",
+    "conversation_type": "direct",
+    "occurred_at": "2026-10-15T10:00:00+00:00",
+    "event_id": "evt_poll_example",
+    "type": "message.outbound",
+    "origin": "automation",
+    "client_request_id": null,
+    "status": "accepted",
+    "message": {
+      "id": "msg_poll_example",
+      "kind": "poll",
+      "text": "House update\n\nContinue the scheduled task?",
+      "options": [
+        "Continue",
+        "Cancel",
+        "No action"
+      ],
+      "in_reply_to": null
+    }
+  },
+  "outbound_redacted": {
+    "schema_version": 1,
+    "config_entry_id": "entry_example",
+    "conversation_id": "direct_example",
+    "conversation_type": "direct",
+    "occurred_at": "2026-10-15T10:00:00+00:00",
+    "event_id": "evt_redacted_example",
+    "type": "message.outbound",
+    "origin": "application",
+    "client_request_id": "request_private_example",
+    "status": "accepted",
+    "content_redacted": true,
+    "message": {
+      "id": null,
+      "kind": "text",
+      "in_reply_to": null
+    }
+  },
+  "outbound_unknown": {
+    "schema_version": 1,
+    "config_entry_id": "entry_example",
+    "conversation_id": "direct_example",
+    "conversation_type": "direct",
+    "occurred_at": "2026-10-15T10:00:00+00:00",
+    "event_id": "evt_unknown_example",
+    "type": "message.outbound",
+    "origin": "application",
+    "client_request_id": "request_example",
+    "status": "unknown",
+    "message": {
+      "id": null,
+      "kind": "text",
+      "text": "The task is complete.",
+      "in_reply_to": null
+    }
+  },
+  "group_message": {
+    "schema_version": 1,
+    "config_entry_id": "entry_example",
+    "conversation_id": "general_group_example",
+    "conversation_type": "group",
+    "occurred_at": "2026-10-15T10:00:00+00:00",
+    "event_id": "evt_group_example",
+    "type": "message.received",
+    "group": {
+      "purpose": "general",
+      "contact_id": "group_subentry_example"
+    },
+    "sender": {
+      "participant_id": "participant_example",
+      "identity_status": "verified"
+    },
+    "message": {
+      "id": "msg_group_example",
+      "kind": "text",
+      "text": "Is anyone home?",
+      "in_reply_to": null,
+      "mentions": {
+        "available": true,
+        "bot": true,
+        "participant_ids": [
+          "participant_bot_example"
+        ]
+      }
+    }
+  },
+  "group_unresolved": {
+    "schema_version": 1,
+    "config_entry_id": "entry_example",
+    "conversation_id": "general_group_example",
+    "conversation_type": "group",
+    "occurred_at": "2026-10-15T10:00:00+00:00",
+    "event_id": "evt_group_unresolved_example",
+    "type": "message.received",
+    "group": {
+      "purpose": "general",
+      "contact_id": "group_subentry_example"
+    },
+    "sender": {
+      "participant_id": null,
+      "identity_status": "unresolved"
+    },
+    "message": {
+      "id": "msg_group_unresolved_example",
+      "kind": "audio",
+      "in_reply_to": null,
+      "mentions": {
+        "available": false,
+        "bot": null,
+        "participant_ids": []
+      }
+    }
+  },
+  "keyed_accepted": {
+    "conversation_id": "direct_example",
+    "message_id": "msg_example",
+    "client_request_id": "request_example",
+    "status": "accepted",
+    "replayed": false
+  },
+  "keyed_pending": {
+    "conversation_id": "direct_example",
+    "message_id": null,
+    "client_request_id": "request_example",
+    "status": "pending",
+    "replayed": true
+  },
+  "keyed_unknown": {
+    "conversation_id": "direct_example",
+    "message_id": null,
+    "client_request_id": "request_example",
+    "status": "unknown",
+    "error_code": "outcome_unknown",
+    "replayed": true
+  },
+  "keyed_conflict": {
+    "conversation_id": "direct_example",
+    "message_id": null,
+    "client_request_id": "request_example",
+    "status": "failed",
+    "error_code": "request_conflict",
+    "replayed": false
+  }
+}
