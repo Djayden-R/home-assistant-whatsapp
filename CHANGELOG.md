@@ -5,6 +5,34 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-15
+
+### Added
+
+- Add opt-in, recipient-scoped `message.outbound` observations for configured
+  notifications, conversation replies, and actionable polls, with explicit
+  content redaction and sanitized observer health. Delivery remains independent
+  of observation; arbitrary-phone sends are excluded.
+- Add optional durable `client_request_id` correlation to conversation sends,
+  safe pending/accepted/failed/unknown outcomes, bounded retention, conflict
+  rejection, verified atomic storage, and restart recovery that never blindly
+  resubmits uncertain sends. Reload drains admitted sends before replacing
+  the request-ledger owner.
+- Add explicit, account-bound general group subentries and native notify
+  entities, with verified roster identity, opaque participants, and available
+  mention/quote metadata. Managed guest lifecycle stays independent.
+- Add `get_channel_capabilities`, public communication contracts, sanitized
+  fixtures, migration notes, and a live-verification checklist. No receipts,
+  media retrieval, replay, execution policy, or agent runtime is introduced.
+
+### Compatibility
+
+- Preserve schema version 1, unkeyed actions, existing notify/poll contracts,
+  private registered command recognition, and managed guest safeguards.
+- General groups require WAHA GOWS 2026.8.2 or newer. Existing direct send
+  paths retain their backend requirements. The HAOS app is unchanged.
+- Live HA/WhatsApp verification remains required before activation.
+
 ## [1.6.0] - 2026-09-28
 
 ### Added

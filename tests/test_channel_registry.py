@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -71,14 +72,14 @@ def make_entry(*, entry_id="entry-a", secret="one-private-secret", subentries=No
     )
 
 
-def make_registry(monkeypatch, *, entry=None, store=None, client=None):
+def make_registry(monkeypatch, *, entry=None, store=None, client=None, hass=None):
     monkeypatch.setattr(
         registry_module,
         "_notify_entity_id",
         lambda _hass, _entry_id, subentry_id: f"notify.waha_{subentry_id}",
     )
     return registry_module.ChannelRegistry(
-        SimpleNamespace(),
+        hass or SimpleNamespace(),
         entry or make_entry(),
         client or FakeClient(),
         store=store or FakeStore(),
@@ -432,3 +433,143 @@ async def test_unknown_conversation_cannot_be_remembered(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="Unknown WAHA conversation"):
         await registry.async_remember_message("ABCDEF", "direct_fake")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_tracking_save_rolls_back_volatile_quote(monkeypatch):
+    """Observer timeouts cannot leave an unpersisted quote usable in memory."""
+    import asyncio
+
+    class CancelledStore(FakeStore):
+        async def async_save(self, data):
+            raise asyncio.CancelledError
+
+    registry = make_registry(monkeypatch, store=CancelledStore())
+    contact = await registry.async_resolve_chat("393331234567@c.us")
+    with pytest.raises(asyncio.CancelledError):
+        await registry.async_remember_message("cancelled", contact.conversation_id)
+    assert (
+        registry.resolve_message(
+            registry.message_token("cancelled"), contact.conversation_id
+        )
+        is None
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await registry.async_claim_event("cancelled-event")
+    assert registry._events == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancel"])
+async def test_uncommitted_message_token_is_hidden_and_rollback_is_safe(
+    monkeypatch, outcome
+):
+    store = FakeStore()
+    registry = make_registry(monkeypatch, store=store)
+    await registry.async_start()
+    route = (await registry.async_resolve_chat("393331234567@c.us")).conversation_id
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = store.async_save
+
+    async def pending_save(data):
+        entered.set()
+        await release.wait()
+        if outcome == "failure":
+            raise OSError("storage unavailable")
+        await original(data)
+
+    store.async_save = pending_save
+    task = asyncio.create_task(
+        registry.async_remember_message("pending-message", route)
+    )
+    await entered.wait()
+    token = registry.message_token("pending-message")
+    assert registry.resolve_message(token, route) is None
+    assert not await registry.async_message_known("pending-message", route)
+    if outcome == "cancel":
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        release.set()
+        if outcome == "failure":
+            with pytest.raises(OSError, match="storage unavailable"):
+                await task
+        else:
+            assert await task == token
+    assert registry.resolve_message(token, route) == (
+        "pending-message" if outcome == "success" else None
+    )
+    assert registry._pending_message_tokens == set()
+
+
+@pytest.mark.asyncio
+async def test_stop_fences_queued_mutations_and_replacement_drains_current_write(
+    monkeypatch,
+):
+    hass = SimpleNamespace(data={})
+    store = FakeStore()
+    old = make_registry(monkeypatch, store=store, hass=hass)
+    await old.async_start()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = store.async_save
+
+    async def pending_save(data):
+        entered.set()
+        await release.wait()
+        await original(data)
+
+    store.async_save = pending_save
+    admitted = asyncio.create_task(old.async_claim_event("A"))
+    await entered.wait()
+    queued = asyncio.create_task(old.async_claim_event("queued"))
+    old.stop()
+    replacement = make_registry(monkeypatch, store=store, hass=hass)
+    start = asyncio.create_task(replacement.async_start())
+    await asyncio.sleep(0)
+    assert not start.done()
+    release.set()
+    assert await admitted
+    with pytest.raises(RuntimeError, match="stopped"):
+        await queued
+    await start
+    assert not await replacement.async_claim_event("A")
+    assert await replacement.async_claim_event("queued")
+    with pytest.raises(RuntimeError, match="stopped"):
+        await old.async_claim_event("late")
+    route = (await old.async_resolve_chat("393331234567@c.us")).conversation_id
+    with pytest.raises(RuntimeError, match="stopped"):
+        await old.async_remember_message("late", route)
+
+
+@pytest.mark.asyncio
+async def test_stop_while_replacement_waits_does_not_restore_or_revive_it(monkeypatch):
+    hass = SimpleNamespace(data={})
+    store = FakeStore()
+    old = make_registry(monkeypatch, store=store, hass=hass)
+    await old.async_start()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = store.async_save
+
+    async def pending_save(data):
+        entered.set()
+        await release.wait()
+        await original(data)
+
+    store.async_save = pending_save
+    admitted = asyncio.create_task(old.async_claim_event("A"))
+    await entered.wait()
+    replacement = make_registry(monkeypatch, store=store, hass=hass)
+    start = asyncio.create_task(replacement.async_start())
+    await asyncio.sleep(0)
+    replacement.stop()
+    release.set()
+    await admitted
+    await start
+    assert replacement._events == {}
+    assert replacement.persistence_available is False
+    with pytest.raises(RuntimeError, match="stopped"):
+        await replacement.async_claim_event("B")

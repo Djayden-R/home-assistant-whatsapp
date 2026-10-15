@@ -20,6 +20,7 @@ from .const import (
     DOMAIN,
     SUBENTRY_TYPE_RECIPIENT,
 )
+from .correlated import DurableStore
 from .helpers import normalize_chat_id, normalize_recipient, recipient_chat_id
 from .polls import canonical_message_id, is_lid_chat_id, lid_mapping_id
 
@@ -32,6 +33,7 @@ MESSAGE_TTL_SECONDS = 7 * 24 * 60 * 60
 EVENT_TTL_SECONDS = 24 * 60 * 60
 MAX_TRACKED_MESSAGES = 2048
 MAX_CLAIMED_EVENTS = 4096
+MAX_CHANNEL_STORAGE_BYTES = 8 * 1024 * 1024
 _DIRECT_NETWORK_JID_RE = re.compile(r"^([0-9]{7,15})@s\.whatsapp\.net$", re.I)
 
 
@@ -80,6 +82,14 @@ class _VolatileStore:
         self._data = deepcopy(data)
 
 
+class _ChannelWriterSlot:
+    """Serialize private channel snapshots across entry runtime replacement."""
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.owner: ChannelRegistry | None = None
+
+
 class ChannelRegistry:
     """Resolve configured contacts and persist bounded opaque message state."""
 
@@ -100,16 +110,19 @@ class ChannelRegistry:
             raise ValueError("WAHA channel secret is missing")
         self._secret = secret.encode("utf-8")
         if store is None:
-            from homeassistant.helpers.storage import Store
-
-            store = Store[dict[str, Any]](
+            store = DurableStore(
                 hass,
                 STORAGE_VERSION,
                 f"waha_whatsapp.channel.{entry.entry_id}",
-                private=True,
-                atomic_writes=True,
+                max_storage_bytes=MAX_CHANNEL_STORAGE_BYTES,
             )
         self._store = store
+        if not hasattr(hass, "data"):
+            hass.data = {}
+        slots = hass.data.setdefault("waha_whatsapp.channel_writers", {})
+        self._writer_slot = slots.setdefault(entry.entry_id, _ChannelWriterSlot())
+        self._stopping = False
+        self._pending_message_tokens: set[str] = set()
         self.persistence_available = True
         self._lock = asyncio.Lock()
         self._messages: dict[str, _TrackedMessage] = {}
@@ -135,8 +148,25 @@ class ChannelRegistry:
         self.persistence_available = False
 
     async def async_start(self) -> None:
-        """Restore unexpired correlation data after a Home Assistant restart."""
-        data = await self._store.async_load()
+        """Drain the previous runtime before reading its committed snapshot."""
+        async with self._writer_slot.lock:
+            if self._stopping:
+                return
+            previous = self._writer_slot.owner
+            if previous is not None and previous is not self:
+                await previous.async_stop()
+            if self._stopping:
+                return
+            self._writer_slot.owner = self
+            async with self._lock:
+                if self._stopping:
+                    return
+                data = await self._store.async_load()
+                if not self._stopping:
+                    self._restore(data)
+
+    def _restore(self, data: object) -> None:
+        """Restore bounded quote and callback mappings from one loaded snapshot."""
         if not isinstance(data, Mapping):
             return
         now = time.time()
@@ -158,7 +188,7 @@ class ChannelRegistry:
                 pending_managed_route = (
                     isinstance(conversation_id, str)
                     and re.fullmatch(
-                        r"(?:group_conversation|guest_direct)_[0-9a-f]{32}",
+                        r"(?:group_conversation|guest_direct|general_group)_[0-9a-f]{32}",
                         conversation_id,
                     )
                     is not None
@@ -204,7 +234,23 @@ class ChannelRegistry:
         self._prune(now)
 
     def stop(self) -> None:
-        """No background work remains after the entry unloads."""
+        """Immediately fence new mutations, including already queued callbacks."""
+        self._stopping = True
+        self.persistence_available = False
+
+    async def async_stop(self) -> None:
+        """Fence synchronously, then drain the current physical snapshot write.
+
+        Cancellation keeps the fence and writer ownership intact. Replacement
+        startup also waits on this lock before loading or saving any snapshot.
+        """
+        self.stop()
+        async with self._lock:
+            pass
+
+    def _require_writable(self) -> None:
+        if self._stopping:
+            raise RuntimeError("WAHA channel registry is stopped")
 
     async def async_resolve_chat(self, chat_id: str) -> ChannelContact | None:
         """Map only a configured direct phone/LID chat, failing closed."""
@@ -265,6 +311,10 @@ class ChannelRegistry:
             raise ValueError("WAHA message ID is missing")
         return self._token("message", canonical_message_id(raw_id), "msg")
 
+    def opaque_id(self, purpose: str, value: str, prefix: str) -> str:
+        """Derive a connection-scoped public identifier without exposing routing."""
+        return self._token(purpose, value, prefix)
+
     def event_token(self, raw_event_id: str) -> str:
         """Create a stable public event ID without exposing the WAHA ID."""
         if not isinstance(raw_event_id, str) or not raw_event_id:
@@ -273,13 +323,16 @@ class ChannelRegistry:
 
     async def async_remember_message(self, raw_id: str, conversation_id: str) -> str:
         """Keep a WAHA ID privately for bounded quoted replies/reactions."""
+        self._require_writable()
         destination = self._conversation_destination(conversation_id)
         if destination is None:
             raise ValueError("Unknown WAHA conversation")
         token = self.message_token(raw_id)
         async with self._lock:
+            self._require_writable()
             previous_messages = self._messages.copy()
             previous_events = self._events.copy()
+            self._pending_message_tokens.add(token)
             try:
                 now = time.time()
                 self._prune(now)
@@ -291,10 +344,12 @@ class ChannelRegistry:
                 )
                 self._prune(now)
                 await self._save()
-            except Exception:
+            except Exception, asyncio.CancelledError:
                 self._messages = previous_messages
                 self._events = previous_events
                 raise
+            finally:
+                self._pending_message_tokens.discard(token)
         return token
 
     def resolve_message(self, token: str, conversation_id: str) -> str | None:
@@ -305,6 +360,7 @@ class ChannelRegistry:
         item = self._messages.get(token)
         if (
             item is None
+            or token in self._pending_message_tokens
             or item.conversation_id != conversation_id
             or item.recipient_fingerprint != self._recipient_fingerprint(destination)
             or item.expires_at <= time.time()
@@ -319,8 +375,10 @@ class ChannelRegistry:
 
     async def async_claim_event(self, raw_event_id: str) -> bool:
         """Atomically suppress a retried webhook within a bounded window."""
+        self._require_writable()
         token = self.event_token(raw_event_id)
         async with self._lock:
+            self._require_writable()
             previous_messages = self._messages.copy()
             previous_events = self._events.copy()
             try:
@@ -332,7 +390,7 @@ class ChannelRegistry:
                 self._prune(now)
                 await self._save()
                 return True
-            except Exception:
+            except Exception, asyncio.CancelledError:
                 self._messages = previous_messages
                 self._events = previous_events
                 raise

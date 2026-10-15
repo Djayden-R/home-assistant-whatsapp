@@ -33,6 +33,7 @@ def test_service_metadata_matches_actions() -> None:
     """All public WAHA actions have editor metadata."""
     services = yaml.safe_load((INTEGRATION / "services.yaml").read_text())
     assert set(services) == {
+        "get_channel_capabilities",
         "get_group_membership",
         "list_commands",
         "register_command",
@@ -183,7 +184,9 @@ def test_bidirectional_channel_reuses_private_webhook() -> None:
     assert "verify_signature(raw_body, signature)" in integration
     assert "MAX_WEBHOOK_BODY_BYTES" in integration
     assert "await inbound_manager.async_handle_payload(payload)" in integration
-    assert "await registry.async_remember_message(" in notify
+    outbound = (INTEGRATION / "outbound.py").read_text()
+    assert "async_send_observed(" in notify
+    assert "await self._registry.async_remember_message(" in outbound
     assert "contact.conversation_id" in notify
     assert '"inbound_channel"' in diagnostics
 

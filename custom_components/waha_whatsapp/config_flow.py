@@ -61,6 +61,15 @@ from .const import (
     DOMAIN,
     SUBENTRY_TYPE_RECIPIENT,
 )
+from .general_groups import (
+    CONF_GROUP_ACCOUNT,
+    CONF_GROUP_ENABLED,
+    CONF_GROUP_ID,
+    SUBENTRY_TYPE_GROUP,
+    GeneralGroupError,
+    group_id_matches,
+    normalize_group_id,
+)
 from .guest_admins import (
     GuestAdminPreview,
     async_guest_admin_preview,
@@ -114,6 +123,7 @@ RECIPIENT_SCHEMA = vol.Schema(
         vol.Required(CONF_RECIPIENT): TextSelector(
             TextSelectorConfig(type=TextSelectorType.TEL)
         ),
+        vol.Optional("observation_content_redacted", default=False): BooleanSelector(),
     }
 )
 
@@ -144,7 +154,10 @@ class WahaWhatsAppConfigFlow(ConfigFlow, domain=DOMAIN):
         cls, config_entry: WahaConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
         """Return the recipient subentries supported by this integration."""
-        return {SUBENTRY_TYPE_RECIPIENT: RecipientSubentryFlow}
+        return {
+            SUBENTRY_TYPE_RECIPIENT: RecipientSubentryFlow,
+            SUBENTRY_TYPE_GROUP: GeneralGroupSubentryFlow,
+        }
 
     @override
     async def async_step_user(
@@ -379,6 +392,13 @@ class WahaWhatsAppOptionsFlow(OptionsFlow):
                         CONF_GUEST_GROUP_ENABLED: enabled,
                         CONF_GUEST_GROUP_NAME: name or DEFAULT_GUEST_GROUP_NAME,
                         CONF_GUEST_GROUP_EXCLUDED_ADMIN_USER_IDS: sorted(excluded),
+                        "outbound_observations_enabled": (
+                            user_input.get("outbound_observations_enabled") is True
+                        ),
+                        "guest_group_observation_content_redacted": (
+                            user_input.get("guest_group_observation_content_redacted")
+                            is True
+                        ),
                     }
                     if not enabled:
                         return self.async_create_entry(
@@ -572,6 +592,14 @@ def _guest_group_options_schema(
 ) -> vol.Schema:
     """Offer explicit exclusions only for currently unmapped HA admins."""
     fields: dict[Any, Any] = {
+        vol.Optional(
+            "outbound_observations_enabled",
+            default=options.get("outbound_observations_enabled", False),
+        ): BooleanSelector(),
+        vol.Optional(
+            "guest_group_observation_content_redacted",
+            default=options.get("guest_group_observation_content_redacted", False),
+        ): BooleanSelector(),
         vol.Required(
             CONF_GUEST_GROUP_ENABLED,
             default=options.get(CONF_GUEST_GROUP_ENABLED, False),
@@ -692,6 +720,9 @@ class RecipientSubentryFlow(ConfigSubentryFlow):
                             return self.async_abort(reason="phone_already_configured")
 
                         data = {CONF_RECIPIENT: recipient}
+                        # Preserve legacy contact data shape when observation is off.
+                        if user_input.get("observation_content_redacted") is True:
+                            data["observation_content_redacted"] = True
                         if person_entity_id is not None:
                             data[CONF_PERSON_ENTITY_ID] = person_entity_id
                         if reconfigure_subentry is not None:
@@ -720,6 +751,113 @@ class RecipientSubentryFlow(ConfigSubentryFlow):
             ),
             errors=errors,
             description_placeholders=placeholders,
+        )
+
+
+class GeneralGroupSubentryFlow(ConfigSubentryFlow):
+    """Explicitly configure an existing group without changing WhatsApp membership."""
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        return await self._async_step_group(user_input, step_id="user")
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        return await self._async_step_group(
+            user_input,
+            step_id="reconfigure",
+            existing=self._get_reconfigure_subentry(),
+        )
+
+    async def _async_step_group(
+        self,
+        user_input: dict[str, Any] | None,
+        *,
+        step_id: str,
+        existing: ConfigSubentry | None = None,
+    ) -> SubentryFlowResult:
+        entry = self._get_entry()
+        if entry.state is not ConfigEntryState.LOADED:
+            return self.async_abort(
+                reason="entry_not_loaded",
+                description_placeholders={"entry_title": entry.title},
+            )
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            name = str(user_input.get(CONF_NAME, "")).strip()
+            if not name or len(name) > 100:
+                errors["base"] = "invalid_name"
+            else:
+                try:
+                    group_id = normalize_group_id(user_input.get(CONF_GROUP_ID))
+                    if any(
+                        subentry.subentry_type == SUBENTRY_TYPE_GROUP
+                        and group_id_matches(subentry.data.get(CONF_GROUP_ID), group_id)
+                        and (
+                            existing is None
+                            or subentry.subentry_id != existing.subentry_id
+                        )
+                        for subentry in entry.subentries.values()
+                    ):
+                        return self.async_abort(reason="group_already_configured")
+                    enabled = user_input.get(CONF_GROUP_ENABLED) is True
+                    # A disabled existing destination must be removable from use
+                    # even while WAHA is offline. New/enabled bindings always prove
+                    # the exact account, exact group and current bot membership.
+                    if (
+                        not enabled
+                        and existing is not None
+                        and group_id_matches(existing.data.get(CONF_GROUP_ID), group_id)
+                    ):
+                        account = existing.data[CONF_GROUP_ACCOUNT]
+                    else:
+                        runtime = getattr(entry, "runtime_data", None)
+                        manager = getattr(runtime, "general_groups", None)
+                        if manager is None:
+                            raise GeneralGroupError("group_unverified")
+                        proof = await manager.async_review(group_id)
+                        account = proof.bot_account
+                except GeneralGroupError as err:
+                    errors["base"] = err.reason
+                except WahaError:
+                    errors["base"] = "group_unverified"
+                else:
+                    data = {
+                        CONF_GROUP_ID: group_id,
+                        CONF_GROUP_ENABLED: enabled,
+                        CONF_GROUP_ACCOUNT: account,
+                        "observation_content_redacted": (
+                            user_input.get("observation_content_redacted") is True
+                        ),
+                    }
+                    if existing is not None:
+                        return self.async_update_and_abort(
+                            entry, existing, title=name, data=data
+                        )
+                    return self.async_create_entry(title=name, data=data)
+        suggested = dict(user_input or {})
+        if user_input is None and existing is not None:
+            suggested = {**existing.data, CONF_NAME: existing.title}
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(
+                    {
+                        vol.Required(CONF_NAME): TextSelector(TextSelectorConfig()),
+                        vol.Required(CONF_GROUP_ID): TextSelector(TextSelectorConfig()),
+                        vol.Required(
+                            CONF_GROUP_ENABLED, default=False
+                        ): BooleanSelector(),
+                        vol.Optional(
+                            "observation_content_redacted", default=False
+                        ): BooleanSelector(),
+                    }
+                ),
+                suggested,
+            ),
+            errors=errors,
         )
 
 

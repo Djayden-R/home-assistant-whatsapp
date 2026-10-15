@@ -53,6 +53,16 @@ See the [command guide](docs/COMMANDS.md) for registration, event format,
 security boundaries, and a first live test. A command declaration does not
 run Home Assistant actions or grant access from WhatsApp group membership.
 
+## Communication API
+
+Integration 1.7.0 adds optional outbound observations, durable correlated text
+sends, capability discovery, and explicitly configured general group notify
+destinations. See the [communication API](docs/CHANNEL_API.md) for setup,
+schemas, privacy controls, compatibility, and live verification. New content
+observation and general groups are disabled by default. The integration remains
+a communication layer: external consumers decide what messages mean and what
+work is authorized.
+
 ## Requirements
 
 - Home Assistant 2026.7 or newer.

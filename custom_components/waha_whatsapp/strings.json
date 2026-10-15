@@ -79,12 +79,14 @@
           "data": {
             "name": "Contact name",
             "person_entity_id": "Home Assistant Person (optional)",
-            "recipient": "WhatsApp phone number"
+            "recipient": "WhatsApp phone number",
+            "observation_content_redacted": "Redact outbound observation content"
           },
           "data_description": {
             "name": "Name used for this contact and its notify entity. If empty, the selected Person's current name is used.",
             "person_entity_id": "Optional identity metadata linking this contact to an existing person.* entity. The integration does not modify the Person.",
-            "recipient": "International telephone number including country code."
+            "recipient": "International telephone number including country code.",
+            "observation_content_redacted": "When outbound observations are enabled, publish content-free markers for sends to this recipient."
           },
           "description": "Update the individual WhatsApp contact. Person association is optional metadata.",
           "title": "Update WhatsApp recipient"
@@ -93,15 +95,73 @@
           "data": {
             "name": "Contact name",
             "person_entity_id": "Home Assistant Person (optional)",
-            "recipient": "WhatsApp phone number"
+            "recipient": "WhatsApp phone number",
+            "observation_content_redacted": "Redact outbound observation content"
           },
           "data_description": {
             "name": "Name used for this contact and its notify entity. If empty, the selected Person's current name is used.",
             "person_entity_id": "Optional identity metadata linking this contact to an existing person.* entity. The integration does not modify the Person.",
-            "recipient": "International telephone number including country code."
+            "recipient": "International telephone number including country code.",
+            "observation_content_redacted": "When outbound observations are enabled, publish content-free markers for sends to this recipient."
           },
           "description": "Add an individual WhatsApp contact. You may associate an existing Home Assistant Person as identity metadata.",
           "title": "Add WhatsApp recipient"
+        }
+      }
+    },
+    "group": {
+      "entry_type": "WhatsApp group",
+      "initiate_flow": {
+        "user": "Add WhatsApp group"
+      },
+      "abort": {
+        "entry_not_loaded": "{entry_title} is not loaded.",
+        "group_already_configured": "This exact WhatsApp group is already configured.",
+        "reconfigure_successful": "The WhatsApp group destination was updated successfully."
+      },
+      "error": {
+        "invalid_name": "Enter a group label of 1 to 100 characters.",
+        "invalid_group_id": "Enter the exact group ID ending in @g.us or its numeric group identifier.",
+        "group_unverified": "WAHA could not verify this exact group and connected account. No destination was enabled.",
+        "managed_group_reserved": "The managed guest group cannot also be a general group destination.",
+        "unsupported_waha_capabilities": "General groups require WAHA GOWS version 2026.8.2 or newer.",
+        "unverified_bot_account": "WAHA has not confirmed a connected account for this session.",
+        "unverified_group_membership": "The connected account is not a confirmed current member of this exact group.",
+        "ambiguous_group_identity": "The group roster contains ambiguous participant identities.",
+        "bot_account_changed": "The connected WhatsApp account changed. Reconfigure this destination to review the account binding."
+      },
+      "step": {
+        "user": {
+          "title": "Add WhatsApp group",
+          "description": "Explicitly select an existing group by its exact ID. WAHA verifies the connected account and current membership before enabling it and before every send. No groups are discovered or changed. Group participants receive no Home Assistant permissions.",
+          "data": {
+            "name": "Group label",
+            "group_id": "Exact WhatsApp group ID",
+            "enabled": "Enable this group destination",
+            "observation_content_redacted": "Redact outbound observation content"
+          },
+          "data_description": {
+            "name": "Label used for the group notify entity.",
+            "group_id": "Exact @g.us group JID or numeric group identifier. The managed guest group is reserved for its separate lifecycle.",
+            "enabled": "Allow inbound events and outbound messages for this explicitly selected group. Disabled by default.",
+            "observation_content_redacted": "When outbound observations are enabled, publish content-free markers for sends to this group."
+          }
+        },
+        "reconfigure": {
+          "title": "Update WhatsApp group",
+          "description": "Explicitly select an existing group by its exact ID. WAHA verifies the connected account and current membership before enabling it and before every send. No groups are discovered or changed. Group participants receive no Home Assistant permissions.",
+          "data": {
+            "name": "Group label",
+            "group_id": "Exact WhatsApp group ID",
+            "enabled": "Enable this group destination",
+            "observation_content_redacted": "Redact outbound observation content"
+          },
+          "data_description": {
+            "name": "Label used for the group notify entity.",
+            "group_id": "Exact @g.us group JID or numeric group identifier. The managed guest group is reserved for its separate lifecycle.",
+            "enabled": "Allow inbound events and outbound messages for this explicitly selected group. Disabled by default.",
+            "observation_content_redacted": "When outbound observations are enabled, publish content-free markers for sends to this group."
+          }
         }
       }
     }
@@ -130,12 +190,16 @@
         "data": {
           "guest_group_enabled": "Enable managed guest group",
           "guest_group_excluded_admin_user_ids": "Administrators to exclude",
-          "guest_group_name": "Group name"
+          "guest_group_name": "Group name",
+          "outbound_observations_enabled": "Publish outbound communication observations",
+          "guest_group_observation_content_redacted": "Redact managed guest-group observed content"
         },
         "data_description": {
           "guest_group_enabled": "Off by default. Enabling starts a separate confirmation step before any group provisioning can begin.",
           "guest_group_excluded_admin_user_ids": "Explicitly exclude each unmapped administrator you do not want to add. You can instead map them to a Person and a WhatsApp recipient, then reopen this form.",
-          "guest_group_name": "Name for the one WhatsApp guest group managed by this connection."
+          "guest_group_name": "Name for the one WhatsApp guest group managed by this connection.",
+          "outbound_observations_enabled": "Off by default. Publish the actual recipient-scoped content and outcome of configured sends on the WAHA event bus. Use recipient redaction for sensitive content.",
+          "guest_group_observation_content_redacted": "When outbound observations are enabled, publish content-free markers for managed guest-group notifications and replies."
         },
         "description": "Mapped administrators for this WAHA connection: {mapped_admins}. Unmapped or ambiguous administrators: {unmapped_admins}. No WhatsApp group is created before the final confirmation.",
         "title": "Managed guest group"
@@ -180,7 +244,7 @@
       "message": "Invalid WhatsApp phone number: {error}"
     },
     "invalid_conversation": {
-      "message": "This WhatsApp conversation is not a configured contact, verified managed group, or current member route."
+      "message": "This WhatsApp conversation is not a configured contact, explicitly enabled general group, verified managed group, or current guest member route."
     },
     "invalid_reply_target": {
       "message": "The quoted WhatsApp message is unknown or has expired. Send without a reply target instead."
@@ -253,12 +317,16 @@
         "title": {
           "description": "Optional heading placed above the poll question.",
           "name": "Title"
+        },
+        "content_redacted": {
+          "name": "Redact observation content",
+          "description": "Publish only a content-free outbound marker when observations are enabled."
         }
       },
       "name": "Send actionable poll"
     },
     "send_to_conversation": {
-      "description": "Send text to a configured contact, verified managed group, or current member using an opaque conversation ID from a waha_whatsapp_event.",
+      "description": "Send text to a configured contact, explicitly enabled general group, verified managed group, or current guest member using an opaque conversation ID.",
       "fields": {
         "conversation_id": {
           "description": "Conversation ID from a WAHA WhatsApp event. Guest private routes stop working after departure; IDs contain no phone number.",
@@ -271,9 +339,31 @@
         "reply_to_message_id": {
           "description": "Optional message ID from an event to quote in WhatsApp. Omit to send a normal message.",
           "name": "Quote message"
+        },
+        "client_request_id": {
+          "name": "Client request ID",
+          "description": "Optional opaque idempotency key of 1 to 128 characters. Repeated identical requests return saved state without another send; different payloads conflict."
+        },
+        "origin": {
+          "name": "Origin",
+          "description": "Optional attribution: automation, application, human, or unknown. Attribution grants no authority."
+        },
+        "content_redacted": {
+          "name": "Redact observation content",
+          "description": "Publish only a content-free outbound marker when observations are enabled. Does not change the message sent to WhatsApp."
         }
       },
       "name": "Send to conversation"
+    },
+    "get_channel_capabilities": {
+      "name": "Get channel capabilities",
+      "description": "Read effective communication capabilities and sanitized observer and correlation health for this configured connection.",
+      "fields": {
+        "config_entry_id": {
+          "name": "WAHA connection",
+          "description": "WAHA connection whose active capabilities are requested."
+        }
+      }
     }
   }
 }

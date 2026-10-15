@@ -64,10 +64,11 @@ class WahaSession:
 
 @dataclass(frozen=True, slots=True)
 class WahaMessage:
-    """Result returned after WAHA accepts a message."""
+    """Send result; malformed successful HTTP responses retain uncertainty."""
 
     id: str | None
     chat_id: str
+    outcome: str = "accepted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,7 +154,11 @@ class WahaClient:
         if reply_to_message_id is not None:
             payload["reply_to"] = reply_to_message_id
         data = await self._request("POST", "/api/sendText", json=payload)
-        return WahaMessage(id=_message_id(data), chat_id=chat_id)
+        return WahaMessage(
+            id=_message_id(data),
+            chat_id=chat_id,
+            outcome="accepted" if isinstance(data, dict) else "unknown",
+        )
 
     async def async_send_group_text(
         self,
@@ -162,7 +167,7 @@ class WahaClient:
         *,
         reply_to_message_id: str | None = None,
     ) -> WahaMessage:
-        """Send only to a validated group JID; caller verifies managed ownership."""
+        """Send to a validated group JID; caller verifies current eligibility."""
         if not _valid_group_id(group_id):
             raise ValueError("Invalid WAHA group ID")
         payload = {
@@ -174,7 +179,11 @@ class WahaClient:
         if reply_to_message_id is not None:
             payload["reply_to"] = reply_to_message_id
         data = await self._request("POST", "/api/sendText", json=payload)
-        return WahaMessage(id=_message_id(data), chat_id=group_id)
+        return WahaMessage(
+            id=_message_id(data),
+            chat_id=group_id,
+            outcome="accepted" if isinstance(data, dict) else "unknown",
+        )
 
     async def async_send_poll(
         self,
@@ -194,7 +203,11 @@ class WahaClient:
             },
         }
         data = await self._request("POST", "/api/sendPoll", json=payload)
-        return WahaMessage(id=_message_id(data), chat_id=chat_id)
+        return WahaMessage(
+            id=_message_id(data),
+            chat_id=chat_id,
+            outcome="accepted" if isinstance(data, dict) else "unknown",
+        )
 
     async def async_resolve_lid(self, lid: str) -> str | None:
         """Resolve a WhatsApp LID to its phone-number direct-chat ID."""
@@ -435,7 +448,7 @@ class WahaClient:
                     try:
                         data = await response.json(content_type=None)
                     except TypeError, ValueError:
-                        data = {"message": await response.text()}
+                        data = await response.text()
                     status = response.status
         except TimeoutError as err:
             raise WahaConnectionError("The request to WAHA timed out") from err

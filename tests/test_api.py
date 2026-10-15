@@ -529,3 +529,38 @@ async def test_group_security_refuses_failed_or_ambiguous_response() -> None:
     session = FakeSession(FakeResponse(200, {"adminsOnly": "false"}))
     with pytest.raises(api.WahaResponseError, match="invalid"):
         await make_client(session).async_get_group_security("123456@g.us")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [None, [], "upstream unavailable"])
+async def test_non_object_send_response_preserves_uncertain_outcome(body) -> None:
+    """An ambiguous 2xx body must not become confirmed acceptance or trigger retry."""
+    session = FakeSession(FakeResponse(200, body))
+    result = await make_client(session).async_send_text("393331234567", "Hello")
+    assert result.outcome == "unknown"
+    assert result.id is None
+    assert len(session.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_object_without_message_id_is_still_accepted() -> None:
+    """A missing optional tracking ID is not evidence of a failed submission."""
+    session = FakeSession(FakeResponse(200, {}))
+    result = await make_client(session).async_send_text("393331234567", "Hello")
+    assert result.outcome == "accepted"
+    assert result.id is None
+    assert len(session.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_non_json_success_is_unknown_without_retry() -> None:
+    """A proxy error page with HTTP 200 must retain uncertainty for keyed sends."""
+
+    class NonJsonResponse(FakeResponse):
+        async def json(self, *, content_type=None):
+            raise ValueError("not JSON")
+
+    session = FakeSession(NonJsonResponse(200, "upstream unavailable"))
+    result = await make_client(session).async_send_text("393331234567", "Hello")
+    assert result.outcome == "unknown"
+    assert len(session.requests) == 1

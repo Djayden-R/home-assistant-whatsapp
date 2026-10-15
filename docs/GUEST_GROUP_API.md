@@ -16,6 +16,10 @@ WAHA callbacks must pass the integration's SHA-512 webhook signature check and
 session/group validation before they are considered. These identifiers are
 communication metadata, not authentication tokens.
 
+The [1.7.0 communication API](CHANNEL_API.md) adds optional outbound
+observations and correlated sends. Explicit general groups have a separate
+contract and do not gain guest lifecycle or private participant routes.
+
 ## Identity and stay lifecycle
 
 | Field | Identifies | Stability and use |

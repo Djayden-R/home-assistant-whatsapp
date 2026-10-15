@@ -66,6 +66,10 @@ send_poll:
       example: Keep scheduled
       selector:
         text:
+    content_redacted:
+      default: false
+      selector:
+        boolean:
 
 send_to_conversation:
   fields:
@@ -84,6 +88,30 @@ send_to_conversation:
       example: msg_opaque_abc
       selector:
         text:
+    client_request_id:
+      example: request_example
+      selector:
+        text:
+    origin:
+      selector:
+        select:
+          options:
+            - automation
+            - application
+            - human
+            - unknown
+    content_redacted:
+      default: false
+      selector:
+        boolean:
+
+get_channel_capabilities:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: waha_whatsapp
 
 get_group_membership:
   fields:

@@ -49,11 +49,14 @@ from .channel_registry import ChannelRegistry
 from .commands import CommandRegistry, CommandRegistryError
 from .const import (
     ATTR_ACTIONS,
+    ATTR_CLIENT_REQUEST_ID,
+    ATTR_CONTENT_REDACTED,
     ATTR_CONVERSATION_ID,
     ATTR_ENTITY_ID,
     ATTR_LINK_PREVIEW,
     ATTR_MESSAGE,
     ATTR_NO_ACTION_TITLE,
+    ATTR_ORIGIN,
     ATTR_REPLY_TO_MESSAGE_ID,
     ATTR_SETTLE_SECONDS,
     ATTR_TITLE,
@@ -61,6 +64,7 @@ from .const import (
     CONF_ADDON_SLUG,
     CONF_API_URL,
     CONF_GUEST_GROUP_ENABLED,
+    CONF_OBSERVATION_CONTENT_REDACTED,
     CONF_PERSON_ENTITY_ID,
     CONF_RECIPIENT,
     CONF_SESSION,
@@ -69,6 +73,7 @@ from .const import (
     DEFAULT_NO_ACTION_TITLE,
     DEFAULT_SETTLE_SECONDS,
     DOMAIN,
+    SERVICE_GET_CHANNEL_CAPABILITIES,
     SERVICE_GET_GROUP_MEMBERSHIP,
     SERVICE_LIST_COMMANDS,
     SERVICE_REGISTER_COMMAND,
@@ -77,6 +82,9 @@ from .const import (
     SERVICE_SEND_TO_CONVERSATION,
     SERVICE_UNREGISTER_COMMAND,
 )
+from .correlated import CorrelatedSendError, CorrelatedSendManager
+from .general_group_inbound import WahaGeneralGroupInboundManager
+from .general_groups import GeneralGroupError, GeneralGroupManager
 from .guest_inbound import WahaGuestInboundManager
 from .guest_manager import MIN_GOWS_VERSION, GuestGroupManager
 from .guest_registry import GuestRegistry
@@ -87,6 +95,7 @@ from .migration import (
     with_webhook_credentials,
     without_obsolete_group_config,
 )
+from .outbound import OutboundObserver, async_send_observed
 from .poll_manager import WahaPollManager
 from .polls import PollValidationError, build_poll_options
 
@@ -120,6 +129,13 @@ SEND_TO_CONVERSATION_SCHEMA = vol.Schema(
         vol.Required(ATTR_CONVERSATION_ID): vol.All(cv.string, vol.Length(min=1)),
         vol.Required(ATTR_MESSAGE): vol.All(cv.string, vol.Length(min=1)),
         vol.Optional(ATTR_REPLY_TO_MESSAGE_ID): vol.All(cv.string, vol.Length(min=1)),
+        vol.Optional(ATTR_CLIENT_REQUEST_ID): vol.All(
+            cv.string, vol.Length(min=1, max=128)
+        ),
+        vol.Optional(ATTR_ORIGIN): vol.In(
+            ("automation", "application", "human", "unknown")
+        ),
+        vol.Optional(ATTR_CONTENT_REDACTED, default=False): cv.boolean,
     }
 )
 
@@ -164,6 +180,7 @@ SEND_POLL_SCHEMA = vol.Schema(
             vol.Coerce(float), vol.Range(min=0, max=30)
         ),
         vol.Optional(ATTR_NO_ACTION_TITLE, default=DEFAULT_NO_ACTION_TITLE): cv.string,
+        vol.Optional(ATTR_CONTENT_REDACTED, default=False): cv.boolean,
     }
 )
 
@@ -182,6 +199,10 @@ class WahaRuntimeData:
     guest_manager: GuestGroupManager
     guest_inbound_manager: WahaGuestInboundManager
     command_registry: CommandRegistry
+    outbound_observer: OutboundObserver
+    correlated_sends: CorrelatedSendManager
+    general_groups: GeneralGroupManager
+    general_group_inbound: WahaGeneralGroupInboundManager
 
 
 type WahaConfigEntry = ConfigEntry[WahaRuntimeData]
@@ -215,6 +236,13 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         SERVICE_GET_GROUP_MEMBERSHIP,
         _async_handle_get_group_membership,
         schema=GET_GROUP_MEMBERSHIP_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_CHANNEL_CAPABILITIES,
+        _async_handle_get_channel_capabilities,
+        schema=COMMAND_ENTRY_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
@@ -310,10 +338,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
     await command_registry.async_start()
     guest_registry = GuestRegistry(hass, entry.entry_id)
     guest_manager = GuestGroupManager(hass, entry, client, guest_registry)
+    general_groups = GeneralGroupManager(
+        hass, entry, client, channel_registry, guest_registry
+    )
     channel_registry.set_extra_route_resolver(
         lambda conversation_id: (
             guest_registry.resolve_route(conversation_id)
             or guest_registry.resolve_group_conversation(conversation_id)
+            or general_groups.conversation_destination(conversation_id)
         )
     )
     poll_manager = WahaPollManager(
@@ -333,10 +365,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
     except Exception:
         # Message correlation is an optional channel feature. A damaged or
         # incompatible channel Store must not take existing notify/polls down.
-        _LOGGER.exception(
+        _LOGGER.warning(
             "Could not restore WAHA channel state; using volatile state until reload"
         )
         channel_registry.use_volatile_storage()
+    outbound_observer = OutboundObserver(hass, entry, channel_registry)
+    correlated_sends = CorrelatedSendManager(hass, entry)
+    await correlated_sends.async_start()
+    general_group_inbound = WahaGeneralGroupInboundManager(
+        hass, entry, general_groups, channel_registry
+    )
     inbound_manager = WahaInboundManager(
         hass,
         entry,
@@ -373,6 +411,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
             callback_hass,
             callback_id,
             request,
+            general_group_inbound=general_group_inbound,
         ),
         local_only=True,
     )
@@ -434,6 +473,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
         guest_manager,
         guest_inbound_manager,
         command_registry,
+        outbound_observer,
+        correlated_sends,
+        general_groups,
+        general_group_inbound,
     )
     entry.async_on_unload(lambda: webhook.async_unregister(hass, webhook_id))
     entry.async_on_unload(poll_manager.stop)
@@ -468,7 +511,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
 
 async def async_unload_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool:
     """Unload a WAHA WhatsApp config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        # A replacement runtime must not read or overwrite this ledger until
+        # every admitted send has persisted its final or uncertain outcome.
+        await entry.runtime_data.correlated_sends.async_stop()
+        entry.runtime_data.channel_registry.stop()
+        await entry.runtime_data.outbound_observer.async_stop()
+        await entry.runtime_data.channel_registry.async_stop()
+    return unloaded
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> None:
@@ -514,10 +565,27 @@ async def _async_handle_send_poll(call: ServiceCall) -> ServiceResponse:
         options = build_poll_options(
             call.data[ATTR_ACTIONS], call.data[ATTR_NO_ACTION_TITLE]
         )
-        result = await entry.runtime_data.client.async_send_poll(
-            recipient,
-            _poll_question(call.data[ATTR_MESSAGE], call.data.get(ATTR_TITLE)),
-            [option.title for option in options],
+        question = _poll_question(call.data[ATTR_MESSAGE], call.data.get(ATTR_TITLE))
+        option_titles = [option.title for option in options]
+        registry = entry.runtime_data.channel_registry
+        try:
+            contact = await registry.async_resolve_chat(recipient)
+        except Exception:
+            # Observation routing is optional and must not block a poll send.
+            contact = None
+        result = await async_send_observed(
+            entry,
+            contact.conversation_id if contact is not None else None,
+            "direct",
+            {"kind": "poll", "text": question, "options": option_titles},
+            lambda: entry.runtime_data.client.async_send_poll(
+                recipient, question, option_titles
+            ),
+            origin="automation",
+            content_redacted=(
+                call.data.get(ATTR_CONTENT_REDACTED, False)
+                or _contact_content_redacted(entry, contact)
+            ),
         )
         if result.id is None:
             raise WahaResponseError("WAHA did not return the poll message ID")
@@ -528,7 +596,6 @@ async def _async_handle_send_poll(call: ServiceCall) -> ServiceResponse:
             call.data[ATTR_SETTLE_SECONDS],
             person_entity_id,
         )
-        await _async_remember_outbound(entry, result)
     except PollValidationError as err:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
@@ -548,83 +615,172 @@ async def _async_handle_send_poll(call: ServiceCall) -> ServiceResponse:
 
 
 async def _async_handle_send_to_conversation(call: ServiceCall) -> ServiceResponse:
-    """Send to an eligible direct contact, group, or current guest route."""
+    """Send text through an eligible route, optionally recording durable intent."""
     conversation_id = call.data[ATTR_CONVERSATION_ID]
+    request_id = call.data.get(ATTR_CLIENT_REQUEST_ID)
     entry = None
-    contact = None
-    group_destination = None
-    guest_destination = None
     for candidate in call.hass.config_entries.async_entries(DOMAIN):
         if candidate.state is not ConfigEntryState.LOADED:
             continue
-        resolved = candidate.runtime_data.channel_registry.resolve_conversation(
-            conversation_id
-        )
-        if resolved is not None:
-            entry, contact = candidate, resolved
-            break
-        guests = candidate.runtime_data.guest_registry
-        group_destination = guests.resolve_group_conversation(conversation_id)
-        guest_destination = guests.resolve_route(conversation_id)
-        if group_destination is not None or guest_destination is not None:
+        runtime = candidate.runtime_data
+        if (
+            runtime.channel_registry.resolve_conversation(conversation_id) is not None
+            or runtime.guest_registry.resolve_group_conversation(conversation_id)
+            or runtime.guest_registry.resolve_route(conversation_id)
+            or runtime.general_groups.resolve_conversation(conversation_id) is not None
+            or (
+                request_id is not None
+                and runtime.correlated_sends.owns_request(conversation_id, request_id)
+            )
+        ):
             entry = candidate
             break
 
     if entry is None:
+        if request_id is not None:
+            return {
+                ATTR_CONVERSATION_ID: conversation_id,
+                ATTR_CLIENT_REQUEST_ID: request_id,
+                "message_id": None,
+                "status": "failed",
+                "error_code": "invalid_conversation",
+                "replayed": False,
+            }
         raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="invalid_conversation",
+            translation_domain=DOMAIN, translation_key="invalid_conversation"
         )
 
-    registry = entry.runtime_data.channel_registry
-    quoted_id = None
-    if quote_token := call.data.get(ATTR_REPLY_TO_MESSAGE_ID):
-        quoted_id = registry.resolve_message(quote_token, conversation_id)
-        if quoted_id is None:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="invalid_reply_target",
-            )
+    runtime = entry.runtime_data
+    registry = runtime.channel_registry
+    quote_token = call.data.get(ATTR_REPLY_TO_MESSAGE_ID)
+    origin = call.data.get(ATTR_ORIGIN, "unknown")
+    redacted = call.data.get(ATTR_CONTENT_REDACTED, False)
 
-    try:
-        if contact is not None:
-            result = await entry.runtime_data.client.async_send_text(
-                contact.recipient,
-                call.data[ATTR_MESSAGE],
-                reply_to_message_id=quoted_id,
-            )
-        elif group_destination is not None:
-            guest_manager = entry.runtime_data.guest_manager
-            verified = await guest_manager.async_verify_group_destination(
-                group_destination
-            )
-            if not verified:
-                raise ValueError("Managed group is not verified")
-            result = await entry.runtime_data.client.async_send_group_text(
-                group_destination,
-                call.data[ATTR_MESSAGE],
-                reply_to_message_id=quoted_id,
-            )
-        elif guest_destination is not None:
+    async def _send() -> dict:
+        # Replayed requests return before this preflight: an expired quote must
+        # never cause a second submission or invalidate a saved acceptance.
+        contact = registry.resolve_conversation(conversation_id)
+        group_destination = runtime.guest_registry.resolve_group_conversation(
+            conversation_id
+        )
+        guest_destination = runtime.guest_registry.resolve_route(conversation_id)
+        general_destination = runtime.general_groups.resolve_conversation(
+            conversation_id
+        )
+        quoted_id = None
+        if quote_token is not None:
+            quoted_id = registry.resolve_message(quote_token, conversation_id)
+            if quoted_id is None:
+                raise CorrelatedSendError("invalid_reply_target")
 
-            async def _send_guest(destination: str) -> WahaMessage:
-                return await entry.runtime_data.client.async_send_text(
-                    destination,
+        conversation_type = (
+            "group"
+            if group_destination or general_destination is not None
+            else "direct"
+        )
+
+        async def _transmit() -> WahaMessage:
+            if contact is not None:
+                return await runtime.client.async_send_text(
+                    contact.recipient,
                     call.data[ATTR_MESSAGE],
                     reply_to_message_id=quoted_id,
                 )
+            if general_destination is not None:
+                try:
+                    return await runtime.general_groups.async_send_text(
+                        conversation_id, call.data[ATTR_MESSAGE], reply_to=quoted_id
+                    )
+                except GeneralGroupError as err:
+                    raise CorrelatedSendError("invalid_conversation") from err
+            if group_destination is not None:
+                if not await runtime.guest_manager.async_verify_group_destination(
+                    group_destination
+                ):
+                    raise CorrelatedSendError("invalid_conversation")
+                return await runtime.client.async_send_group_text(
+                    group_destination,
+                    call.data[ATTR_MESSAGE],
+                    reply_to_message_id=quoted_id,
+                )
+            if guest_destination is not None:
 
-            result = await entry.runtime_data.guest_registry.async_with_route(
-                conversation_id,
-                entry.runtime_data.guest_manager.async_verify_guest_destination,
-                _send_guest,
+                async def _send_guest(destination: str) -> WahaMessage:
+                    return await runtime.client.async_send_text(
+                        destination,
+                        call.data[ATTR_MESSAGE],
+                        reply_to_message_id=quoted_id,
+                    )
+
+                try:
+                    return await runtime.guest_registry.async_with_route(
+                        conversation_id,
+                        runtime.guest_manager.async_verify_guest_destination,
+                        _send_guest,
+                    )
+                except ValueError as err:
+                    raise CorrelatedSendError("invalid_conversation") from err
+            raise CorrelatedSendError("invalid_conversation")
+
+        route_redacted = _contact_content_redacted(entry, contact)
+        if group_destination is not None:
+            route_redacted = bool(
+                entry.options.get("guest_group_observation_content_redacted")
             )
-        else:
-            raise ValueError("Unknown managed conversation")
-    except ValueError as err:
+        if general_destination is not None:
+            subentry = entry.subentries.get(general_destination.subentry_id)
+            route_redacted = bool(
+                subentry and subentry.data.get(CONF_OBSERVATION_CONTENT_REDACTED)
+            )
+        result = await async_send_observed(
+            entry,
+            conversation_id,
+            conversation_type,
+            {
+                "kind": "text",
+                "text": call.data[ATTR_MESSAGE],
+                "in_reply_to": quote_token,
+            },
+            _transmit,
+            origin=origin,
+            client_request_id=request_id,
+            content_redacted=redacted or route_redacted,
+        )
+        message_id = None
+        if result.id is not None:
+            try:
+                token = registry.message_token(result.id)
+                if registry.resolve_message(token, conversation_id) is not None:
+                    message_id = token
+            except Exception:
+                # Known acceptance survives optional correlation failure.
+                _LOGGER.warning("WAHA text accepted without message tracking")
+        return {
+            "status": result.outcome,
+            "message_id": message_id,
+            **(
+                {"error_code": "outcome_unknown"} if result.outcome == "unknown" else {}
+            ),
+        }
+
+    if request_id is not None:
+        return await runtime.correlated_sends.async_execute(
+            conversation_id,
+            request_id,
+            {
+                "message": call.data[ATTR_MESSAGE],
+                "reply_to_message_id": quote_token,
+                "origin": origin,
+                "content_redacted": redacted,
+            },
+            _send,
+        )
+
+    try:
+        result = await _send()
+    except CorrelatedSendError as err:
         raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="invalid_conversation",
+            translation_domain=DOMAIN, translation_key=err.code
         ) from err
     except WahaError as err:
         raise HomeAssistantError(
@@ -632,24 +788,20 @@ async def _async_handle_send_to_conversation(call: ServiceCall) -> ServiceRespon
             translation_key="action_failed",
             translation_placeholders={"error": str(err)},
         ) from err
-
-    message_id = None
-    if result.id is not None:
-        try:
-            message_id = await registry.async_remember_message(
-                result.id, conversation_id
-            )
-        except Exception:
-            # WAHA has already accepted the send. Reporting a failure here
-            # would encourage the caller to resend a duplicate message.
-            _LOGGER.exception("WAHA sent text but channel tracking failed")
-
     if call.return_response:
         response = {ATTR_CONVERSATION_ID: conversation_id}
-        if message_id is not None:
-            response["message_id"] = message_id
+        if result["message_id"] is not None:
+            response["message_id"] = result["message_id"]
         return response
     return None
+
+
+def _contact_content_redacted(entry: WahaConfigEntry, contact) -> bool:
+    """Read an explicit destination policy; never infer sensitivity from text."""
+    if contact is None:
+        return False
+    subentry = entry.subentries.get(contact.subentry_id)
+    return bool(subentry and subentry.data.get(CONF_OBSERVATION_CONTENT_REDACTED))
 
 
 async def _async_handle_get_group_membership(call: ServiceCall) -> ServiceResponse:
@@ -665,6 +817,60 @@ async def _async_handle_get_group_membership(call: ServiceCall) -> ServiceRespon
     )
     snapshot["failure_reason"] = guest_manager.failure_reason
     return snapshot
+
+
+async def _async_handle_get_channel_capabilities(call: ServiceCall) -> ServiceResponse:
+    """Describe this active connection without exposing private transport state."""
+    entry = _loaded_entry(call.hass, call.data[CONF_CONFIG_ENTRY_ID])
+    runtime = entry.runtime_data
+    observation_enabled = False
+    observation_health = "unavailable"
+    try:
+        observation_enabled = runtime.outbound_observer.enabled
+        observation_health = runtime.outbound_observer.health
+    except Exception:
+        # Report missing observation instead of making capability discovery fail.
+        pass
+    try:
+        server = await runtime.client.async_get_server()
+        session = await runtime.client.async_get_session()
+        connected = session.status == "WORKING" and bool(session.account_id)
+    except WahaError:
+        server = runtime.server
+        connected = False
+
+    groups_ready = False
+    if connected and _supports_guest_webhooks(server):
+        for subentry_id in entry.subentries:
+            destination = runtime.general_groups.resolve_subentry(subentry_id)
+            if destination is None:
+                continue
+            try:
+                await runtime.general_groups.async_verify(destination)
+            except GeneralGroupError, WahaError:
+                continue
+            groups_ready = True
+            break
+
+    capabilities = {
+        "schema_versions": [1],
+        "outbound_observations": (connected and observation_enabled),
+        "correlated_sends": connected
+        and runtime.correlated_sends.persistence_available,
+        "general_groups": groups_ready,
+        "mentions": groups_ready,
+        "delivery_receipts": False,
+        "message_changes": False,
+        "media_retrieval": False,
+        "transport_replay": False,
+        "manual_outbound_observations": False,
+        "observation_health": (observation_health if connected else "unavailable"),
+    }
+    capabilities.update(runtime.correlated_sends.capabilities)
+    capabilities["correlated_sends"] = (
+        connected and runtime.correlated_sends.persistence_available
+    )
+    return capabilities
 
 
 async def _async_require_command_admin(call: ServiceCall) -> None:
@@ -735,7 +941,7 @@ async def _async_remember_outbound(entry: WahaConfigEntry, result: WahaMessage) 
     except Exception:
         # Tracking is optional after a successful send and must not change the
         # legacy notification or poll action's delivery result.
-        _LOGGER.exception("WAHA sent a message but channel tracking failed")
+        _LOGGER.warning("WAHA sent a message but channel tracking failed")
 
 
 def _loaded_entry(hass: HomeAssistant, entry_id: str) -> WahaConfigEntry:
@@ -858,6 +1064,8 @@ async def _async_handle_waha_webhook(
     hass: HomeAssistant,
     webhook_id: str,
     request: Request,
+    *,
+    general_group_inbound: WahaGeneralGroupInboundManager | None = None,
 ) -> Response:
     """Authenticate and route one internal WAHA event."""
     del hass, webhook_id
@@ -877,11 +1085,15 @@ async def _async_handle_waha_webhook(
     elif isinstance(event_name, str) and event_name.startswith("group.v2."):
         if guest_callbacks_ready:
             await guest_manager.async_handle_webhook(payload)
-    elif event_name in ("message", "message.reaction") and (
-        not guest_callbacks_ready
-        or not await guest_inbound_manager.async_handle_payload(payload)
-    ):
-        await inbound_manager.async_handle_payload(payload)
+    elif event_name in ("message", "message.reaction"):
+        if general_group_inbound is not None and (
+            await general_group_inbound.async_handle_payload(payload)
+        ):
+            return Response(status=HTTPStatus.OK)
+        if not guest_callbacks_ready or not (
+            await guest_inbound_manager.async_handle_payload(payload)
+        ):
+            await inbound_manager.async_handle_payload(payload)
     return Response(status=HTTPStatus.OK)
 
 

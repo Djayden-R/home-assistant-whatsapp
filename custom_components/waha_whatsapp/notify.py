@@ -1,6 +1,6 @@
 """Individual notify entities for WAHA WhatsApp."""
 
-import logging
+from contextlib import suppress
 from typing import override
 
 from homeassistant.components.notify import NotifyEntity, NotifyEntityFeature
@@ -19,10 +19,10 @@ from .const import (
     DEFAULT_GUEST_GROUP_NAME,
     DOMAIN,
 )
+from .general_groups import SUBENTRY_TYPE_GROUP, GeneralGroupError
 from .guest_manager import GuestGroupError
 from .helpers import contact_state_attributes, render_notification
-
-_LOGGER = logging.getLogger(__name__)
+from .outbound import async_send_observed
 
 
 async def async_setup_entry(
@@ -33,7 +33,11 @@ async def async_setup_entry(
     """Set up individual WhatsApp recipients."""
     for subentry_id, subentry in config_entry.subentries.items():
         async_add_entities(
-            [WahaNotifyEntity(config_entry, subentry)],
+            [
+                WahaGeneralGroupNotifyEntity(config_entry, subentry)
+                if subentry.subentry_type == SUBENTRY_TYPE_GROUP
+                else WahaNotifyEntity(config_entry, subentry)
+            ],
             config_subentry_id=subentry_id,
         )
     if config_entry.options.get(CONF_GUEST_GROUP_ENABLED) is True:
@@ -101,26 +105,86 @@ class WahaGuestGroupNotifyEntity(NotifyEntity):
 
     @override
     async def async_send_message(self, message: str, title: str | None = None) -> None:
-        try:
-            result = (
-                await self.config_entry.runtime_data.guest_manager.async_send_to_group(
-                    render_notification(message, title)
-                )
-            )
-        except (GuestGroupError, WahaError) as err:
-            raise _home_assistant_error(err) from err
-        if result.id is not None:
+        rendered = render_notification(message, title)
+        conversation_id = None
+        with suppress(Exception):
             conversation_id = self.config_entry.runtime_data.guest_registry.snapshot()[
                 "conversation_id"
             ]
-            if isinstance(conversation_id, str):
-                try:
-                    registry = self.config_entry.runtime_data.channel_registry
-                    await registry.async_remember_message(result.id, conversation_id)
-                except Exception:
-                    _LOGGER.exception(
-                        "WAHA group notification sent but channel tracking failed"
+        try:
+            await async_send_observed(
+                self.config_entry,
+                conversation_id,
+                "group",
+                {"kind": "text", "text": rendered},
+                lambda: (
+                    self.config_entry.runtime_data.guest_manager.async_send_to_group(
+                        rendered
                     )
+                ),
+                origin="automation",
+                content_redacted=(
+                    self.config_entry.options.get(
+                        "guest_group_observation_content_redacted"
+                    )
+                    is True
+                ),
+            )
+        except (GuestGroupError, WahaError) as err:
+            raise _home_assistant_error(err) from err
+
+
+class WahaGeneralGroupNotifyEntity(NotifyEntity):
+    """One explicitly configured group, with independent eligibility checks."""
+
+    _attr_supported_features = NotifyEntityFeature.TITLE
+    _attr_should_poll = True
+
+    def __init__(self, config_entry: WahaConfigEntry, subentry: ConfigSubentry) -> None:
+        self.config_entry = config_entry
+        self._subentry = subentry
+        self._attr_name = subentry.title
+        self._attr_unique_id = (
+            f"{config_entry.unique_id}_{subentry.unique_id or subentry.subentry_id}"
+        )
+        self._attr_device_info = _device_info(config_entry, subentry)
+
+    @property
+    @override
+    def suggested_object_id(self) -> str:
+        return self._subentry.title
+
+    @property
+    @override
+    def available(self) -> bool:
+        return (
+            self.config_entry.runtime_data.general_groups.resolve_subentry(
+                self._subentry.subentry_id
+            )
+            is not None
+        )
+
+    @override
+    async def async_send_message(self, message: str, title: str | None = None) -> None:
+        manager = self.config_entry.runtime_data.general_groups
+        destination = manager.resolve_subentry(self._subentry.subentry_id)
+        if destination is None:
+            raise _home_assistant_error(GeneralGroupError("invalid_conversation"))
+        rendered = render_notification(message, title)
+        try:
+            await async_send_observed(
+                self.config_entry,
+                destination.conversation_id,
+                "group",
+                {"kind": "text", "text": rendered},
+                lambda: manager.async_send_text(destination.conversation_id, rendered),
+                origin="automation",
+                content_redacted=(
+                    self._subentry.data.get("observation_content_redacted") is True
+                ),
+            )
+        except (GeneralGroupError, WahaError) as err:
+            raise _home_assistant_error(err) from err
 
 
 async def _async_send_to_recipient(
@@ -130,21 +194,27 @@ async def _async_send_to_recipient(
     title: str | None,
 ) -> None:
     """Render and send one configured recipient notification."""
-    result = await config_entry.runtime_data.client.async_send_text(
-        subentry.data[CONF_RECIPIENT],
-        render_notification(message, title),
+    rendered = render_notification(message, title)
+    conversation_id = None
+    try:
+        registry = config_entry.runtime_data.channel_registry
+        contact = await registry.async_resolve_chat(subentry.data[CONF_RECIPIENT])
+        if contact is not None and contact.subentry_id == subentry.subentry_id:
+            conversation_id = contact.conversation_id
+    except Exception:
+        # Routing observations are optional; the configured notification sends.
+        pass
+    await async_send_observed(
+        config_entry,
+        conversation_id,
+        "direct",
+        {"kind": "text", "text": rendered},
+        lambda: config_entry.runtime_data.client.async_send_text(
+            subentry.data[CONF_RECIPIENT], rendered
+        ),
+        origin="automation",
+        content_redacted=subentry.data.get("observation_content_redacted") is True,
     )
-    if result.id is not None:
-        try:
-            registry = config_entry.runtime_data.channel_registry
-            contact = await registry.async_resolve_chat(result.chat_id)
-            if contact is not None:
-                await registry.async_remember_message(
-                    result.id, contact.conversation_id
-                )
-        except Exception:
-            # The notification was sent; quote/reaction tracking is secondary.
-            _LOGGER.exception("WAHA notification sent but channel tracking failed")
 
 
 def _device_info(config_entry: WahaConfigEntry, subentry: ConfigSubentry) -> DeviceInfo:
