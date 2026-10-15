@@ -513,24 +513,158 @@ async def test_managed_guest_notify_uses_independent_route(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stalled_tracking_is_bounded_and_does_not_change_acceptance(monkeypatch):
+@pytest.mark.parametrize("late_failure", [False, True])
+async def test_stalled_tracking_is_bounded_and_late_outcome_is_consumed(
+    monkeypatch, late_failure
+):
     monkeypatch.setattr(outbound, "_OBSERVATION_TIMEOUT_SECONDS", 0.001)
+    release = asyncio.Event()
+    cancelled = False
+    unhandled = []
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, "call_exception_handler", unhandled.append)
 
     async def stalled(*_args):
-        await asyncio.Event().wait()
+        nonlocal cancelled
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled = True
+            # Model a physical write that must drain before cancellation.
+            await release.wait()
+            raise
+        if late_failure:
+            raise RuntimeError("PRIVATE_LATE_STORAGE_FAILURE")
+        return "msg_late"
 
     registry = SimpleNamespace(async_remember_message=stalled)
     observer, _, bus, _ = _observer(registry=registry)
     result = api.WahaMessage("private", "private")
-    assert (
-        await observer.async_send(
-            "direct_opaque",
-            "direct",
-            {"kind": "text", "text": "notice"},
-            AsyncMock(return_value=result),
+    send = AsyncMock(return_value=result)
+    send_task = asyncio.create_task(
+        observer.async_send(
+            "direct_opaque", "direct", {"kind": "text", "text": "notice"}, send
         )
-        is result
     )
+    try:
+        # Do not cancel on a regression: the fake durable drain deliberately
+        # blocks cancellation until released, just as a physical write would.
+        done, _ = await asyncio.wait({send_task}, timeout=0.1)
+        assert send_task in done
+        assert send_task.result() is result
+        assert cancelled is False
+        assert len(observer._tracking_tasks) == 1
+    finally:
+        release.set()
+        await send_task
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+    send.assert_awaited_once()
+    assert not observer._tracking_tasks
+    assert unhandled == []
+    assert len(bus.events) == 1
     assert bus.events[0][1]["status"] == "accepted"
     assert bus.events[0][1]["message"]["id"] is None
     assert observer.health == "degraded"
+    assert observer.tracking_failure_count == 1
+    assert "PRIVATE" not in str(observer.snapshot())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("late_failure", [False, True])
+async def test_stop_drains_retained_tracking_and_fences_late_sends(
+    monkeypatch, late_failure
+):
+    monkeypatch.setattr(outbound, "_OBSERVATION_TIMEOUT_SECONDS", 0.001)
+    release = asyncio.Event()
+    completed = asyncio.Event()
+
+    async def stalled(*_args):
+        await release.wait()
+        completed.set()
+        if late_failure:
+            raise RuntimeError("PRIVATE_DISK_FAILURE")
+        return "msg_tracked"
+
+    track = AsyncMock(side_effect=stalled)
+    observer, _, bus, _ = _observer(
+        registry=SimpleNamespace(async_remember_message=track)
+    )
+    result = api.WahaMessage("private", "private")
+    first_send = AsyncMock(return_value=result)
+    assert (
+        await observer.async_send(
+            "direct_opaque", "direct", {"kind": "text", "text": "notice"}, first_send
+        )
+        is result
+    )
+    stop = asyncio.create_task(observer.async_stop())
+    try:
+        await asyncio.sleep(0)
+        assert not stop.done()
+        assert observer.health == "unavailable"
+        assert observer.enabled is False
+        late_send = AsyncMock(return_value=result)
+        assert (
+            await observer.async_send(
+                "direct_opaque",
+                "direct",
+                {"kind": "text", "text": "late notice"},
+                late_send,
+            )
+            is result
+        )
+        late_send.assert_awaited_once()
+        track.assert_awaited_once()
+        assert len(bus.events) == 1
+    finally:
+        release.set()
+        await stop
+    assert completed.is_set()
+    assert not observer._tracking_tasks
+    first_send.assert_awaited_once()
+    # A send after completed shutdown is equally independent from tracking.
+    after_stop = AsyncMock(return_value=result)
+    await observer.async_send(
+        "direct_opaque", "direct", {"kind": "text", "text": "after stop"}, after_stop
+    )
+    after_stop.assert_awaited_once()
+    track.assert_awaited_once()
+    assert len(bus.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stop_drains_tracking_before_propagating(monkeypatch):
+    monkeypatch.setattr(outbound, "_OBSERVATION_TIMEOUT_SECONDS", 0.001)
+    release = asyncio.Event()
+    tracking_cancelled = False
+
+    async def stalled(*_args):
+        nonlocal tracking_cancelled
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            tracking_cancelled = True
+            raise
+        return "msg_tracked"
+
+    observer, _, _, _ = _observer(
+        registry=SimpleNamespace(async_remember_message=stalled)
+    )
+    await observer.async_send(
+        "direct_opaque",
+        "direct",
+        {"kind": "text", "text": "notice"},
+        AsyncMock(return_value=api.WahaMessage("private", "private")),
+    )
+    stop = asyncio.create_task(observer.async_stop())
+    await asyncio.sleep(0)
+    stop.cancel()
+    await asyncio.sleep(0)
+    assert not stop.done()
+    assert tracking_cancelled is False
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await stop
+    assert not observer._tracking_tasks
+    assert tracking_cancelled is False

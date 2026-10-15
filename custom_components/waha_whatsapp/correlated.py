@@ -15,6 +15,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .api import (
@@ -79,6 +80,107 @@ def _safe_message_id(value: object) -> bool:
     )
 
 
+class DurableStore:
+    """Use Store's private format with acknowledged fsync-backed writes.
+
+    Store.async_save intentionally logs some write failures and defers writes
+    while HA is stopping. Neither behavior can acknowledge a transport intent.
+    Keep its public path/format, but call HA's atomic file helper directly and
+    strictly load without Store's corrupt-file reset or in-memory cache.
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        version: int,
+        key: str,
+        *,
+        max_storage_bytes: int = MAX_IDEMPOTENCY_STORAGE_BYTES,
+    ) -> None:
+        """Create a private, strictly loaded Store-compatible snapshot file."""
+        from homeassistant.helpers.storage import Store
+
+        self._hass = hass
+        self._max_storage_bytes = max_storage_bytes
+        self._store = Store[dict[str, Any]](
+            hass, version, key, private=True, atomic_writes=True
+        )
+
+    async def async_load(self) -> dict[str, Any] | None:
+        """Read a real snapshot without corruption reset or cached state."""
+        return await self._async_wait_io(self._hass.async_add_executor_job(self._load))
+
+    def _load(self) -> dict[str, Any] | None:
+        try:
+            with Path(self._store.path).open("rb") as stream:
+                raw = stream.read(self._max_storage_bytes + 1)
+        except FileNotFoundError:
+            return None
+        if len(raw) > self._max_storage_bytes:
+            raise ValueError("Idempotency envelope exceeds limits")
+        envelope = json.loads(raw)
+        if (
+            not isinstance(envelope, dict)
+            or envelope.get("version") != self._store.version
+            or envelope.get("minor_version") != self._store.minor_version
+            or envelope.get("key") != self._store.key
+            or not isinstance(envelope.get("data"), dict)
+        ):
+            raise ValueError("Invalid idempotency storage envelope")
+        return envelope["data"]
+
+    async def async_save(self, data: dict[str, Any]) -> None:
+        """Acknowledge only completed atomic writes; propagate every failure."""
+        envelope = {
+            "version": self._store.version,
+            "minor_version": self._store.minor_version,
+            "key": self._store.key,
+            "data": deepcopy(data),
+        }
+        await self._async_wait_io(
+            self._hass.async_add_executor_job(self._write, envelope)
+        )
+
+    @staticmethod
+    async def _async_wait_io(work: asyncio.Future[Any]) -> Any:
+        # Cancellation cannot release the writer lease while its executor is
+        # still replacing the file. Finish the physical write, then propagate.
+        cancelled = False
+        while True:
+            try:
+                result = await asyncio.shield(work)
+                break
+            except asyncio.CancelledError:
+                if work.cancelled():
+                    raise
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
+
+    def _write(self, envelope: dict[str, Any]) -> None:
+        from homeassistant.util.file import write_utf8_file_atomic
+
+        serialized = self._serialize(envelope)
+        if len(serialized) > self._max_storage_bytes:
+            raise ValueError("Private storage envelope exceeds limits")
+        path = Path(self._store.path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_utf8_file_atomic(str(path), serialized, private=True, mode="wb")
+
+    @staticmethod
+    def _serialize(envelope: dict[str, Any]) -> bytes:
+        return _encoded(envelope)
+
+
+class _WriterSlot:
+    """One entry's lifetime writer handoff within a Home Assistant process."""
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.owner: CorrelatedSendManager | None = None
+
+
 class CorrelatedSendManager:
     """Persist intent before releasing the lock to perform a keyed send.
 
@@ -96,22 +198,29 @@ class CorrelatedSendManager:
     ) -> None:
         """Use an entry-scoped atomic private Home Assistant Store."""
         self._entry_id = entry.entry_id
-        if store is None:
-            from homeassistant.helpers.storage import Store
-
-            store = Store[dict[str, Any]](
+        self._store = (
+            store
+            if store is not None
+            else DurableStore(
                 hass,
                 STORAGE_VERSION,
                 f"waha_whatsapp.correlated.{entry.entry_id}",
-                private=True,
-                atomic_writes=True,
+                max_storage_bytes=MAX_IDEMPOTENCY_STORAGE_BYTES,
             )
-        self._store = store
+        )
+        if not hasattr(hass, "data"):
+            hass.data = {}
+        slots = hass.data.setdefault("waha_whatsapp.correlated_writers", {})
+        self._writer_slot = slots.setdefault(entry.entry_id, _WriterSlot())
         self._records: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
         self.persistence_available = False
         self._started = False
         self._capacity_exhausted = False
+        self._stopping = False
+        self._active: set[asyncio.Future[None]] = set()
+        self._drained = asyncio.Event()
+        self._drained.set()
 
     @property
     def capabilities(self) -> dict[str, Any]:
@@ -140,7 +249,7 @@ class CorrelatedSendManager:
             "records": len(self._records),
             "pending": pending,
             "unknown": unknown,
-            "storage_bytes": len(_encoded(self._snapshot())),
+            "storage_bytes": self._storage_size(self._snapshot()),
             "capacity_exhausted": self._capacity_exhausted,
         }
 
@@ -173,28 +282,47 @@ class CorrelatedSendManager:
         ).hexdigest()
 
     async def async_start(self) -> None:
-        """Restore once; malformed/unreadable stores disable new keyed sends."""
+        """Drain the previous runtime before loading this entry's ledger."""
+        async with self._writer_slot.lock:
+            if self._started or self._stopping:
+                return
+            previous = self._writer_slot.owner
+            if previous is not None and previous is not self:
+                await previous.async_stop()
+            if self._stopping:
+                return
+            self._writer_slot.owner = self
+            async with self._lock:
+                self._started = True
+                try:
+                    data = await self._store.async_load()
+                    if data is not None:
+                        self._restore(data)
+                    changed = self._prune(time.time())
+                    for record in self._records.values():
+                        if record["status"] == "pending":
+                            record.update(
+                                status="unknown", error_code="outcome_unknown"
+                            )
+                            changed = True
+                    if changed:
+                        await self._store.async_save(self._snapshot())
+                except Exception:
+                    # An unreadable record may fence an already accepted send.
+                    self.persistence_available = False
+                    return
+                self.persistence_available = True
+
+    async def async_stop(self) -> None:
+        """Fence admission, then drain every admitted send and its outcome save.
+
+        Cancelling the wait keeps the admission fence in place. Any replacement
+        manager also waits on this drain before reading or writing the ledger.
+        """
         async with self._lock:
-            if self._started:
-                return
-            self._started = True
-            try:
-                data = await self._store.async_load()
-                if data is not None:
-                    self._restore(data)
-                changed = self._prune(time.time())
-                for record in self._records.values():
-                    if record["status"] == "pending":
-                        record.update(status="unknown", error_code="outcome_unknown")
-                        changed = True
-                if changed:
-                    await self._store.async_save(self._snapshot())
-            except Exception:
-                # Fail closed: skipping an unreadable record could duplicate a
-                # previously accepted send. No volatile deduplication fallback.
-                self.persistence_available = False
-                return
-            self.persistence_available = True
+            self._stopping = True
+            self.persistence_available = False
+        await self._drained.wait()
 
     async def async_execute(
         self,
@@ -238,6 +366,12 @@ class CorrelatedSendManager:
                         replayed=False,
                     )
                 return self._response(base, existing, replayed=True)
+            if self._stopping:
+                return self._response(
+                    base,
+                    {"status": "failed", "error_code": "channel_unavailable"},
+                    replayed=False,
+                )
             if not self.persistence_available:
                 return self._response(
                     base,
@@ -271,6 +405,23 @@ class CorrelatedSendManager:
                 self.persistence_available = False
                 return self._response(base, record, replayed=False)
             self._capacity_exhausted = False
+            active = asyncio.get_running_loop().create_future()
+            self._active.add(active)
+            self._drained.clear()
+        try:
+            return await self._async_execute_admitted(token, base, async_send)
+        finally:
+            self._active.discard(active)
+            active.set_result(None)
+            if not self._active:
+                self._drained.set()
+
+    async def _async_execute_admitted(
+        self,
+        token: str,
+        base: dict[str, Any],
+        async_send: Callable[[], Awaitable[Any]],
+    ) -> dict[str, Any]:
         try:
             outcome = self._outcome(await async_send())
         except asyncio.CancelledError:
@@ -372,6 +523,18 @@ class CorrelatedSendManager:
     def _snapshot(self) -> dict[str, Any]:
         return {"records": self._records}
 
+    def _storage_size(self, data: object) -> int:
+        return len(
+            _encoded(
+                {
+                    "version": STORAGE_VERSION,
+                    "minor_version": 1,
+                    "key": f"waha_whatsapp.correlated.{self._entry_id}",
+                    "data": data,
+                }
+            )
+        )
+
     def _fits(self) -> bool:
         # Reserve worst-case escaped result fields before network I/O. Results
         # cannot push an already accepted intent beyond the configured limit.
@@ -384,7 +547,8 @@ class CorrelatedSendManager:
                 )
         return (
             len(reserved) <= MAX_IDEMPOTENCY_RECORDS
-            and len(_encoded({"records": reserved})) <= MAX_IDEMPOTENCY_STORAGE_BYTES
+            and self._storage_size({"records": reserved})
+            <= MAX_IDEMPOTENCY_STORAGE_BYTES
         )
 
     def _restore(self, data: object) -> None:
@@ -393,7 +557,7 @@ class CorrelatedSendManager:
         records = data["records"]
         if (
             len(records) > MAX_IDEMPOTENCY_RECORDS
-            or len(_encoded(data)) > MAX_IDEMPOTENCY_STORAGE_BYTES
+            or self._storage_size(data) > MAX_IDEMPOTENCY_STORAGE_BYTES
         ):
             raise ValueError("Idempotency store exceeds limits")
         for token, record in records.items():

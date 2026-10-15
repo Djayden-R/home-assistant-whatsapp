@@ -187,7 +187,15 @@ saved `pending`; a subsequent identical call returns the settled result with
 removed/disabled route rejects new requests and is never silently substituted;
 retained keyed requests still replay their saved result without sending.
 
-Intent is saved before the send. Restored `pending` becomes `unknown`, and
+Intent is saved before the send using private atomic persistence that propagates
+actual read/write failures. Corrupt existing state fails closed instead of
+being treated as a new empty ledger. Connection unload fences new keyed
+admissions and drains admitted sends; a replacement runtime waits for the
+previous storage owner before restoring state. Optional quote tracking also
+uses an exclusive channel-storage owner across reloads. Slow tracking can
+finish in supervised background work after its observation deadline; unloading
+drains that work, and a quote becomes usable only after its write completes.
+Restored `pending` becomes `unknown`, and
 an interrupted or uncertain submission is never automatically resent. A
 successful transport submission whose final outcome cannot be persisted also
 returns `unknown`. Missing optional quote tracking alone still returns

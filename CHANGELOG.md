@@ -15,7 +15,9 @@ All notable changes are documented here. This project follows
   of observation; arbitrary-phone sends are excluded.
 - Add optional durable `client_request_id` correlation to conversation sends,
   safe pending/accepted/failed/unknown outcomes, bounded retention, conflict
-  rejection, and restart recovery that never blindly resubmits uncertain sends.
+  rejection, verified atomic storage, and restart recovery that never blindly
+  resubmits uncertain sends. Reload drains admitted sends before replacing
+  the request-ledger owner.
 - Add explicit, account-bound general group subentries and native notify
   entities, with verified roster identity, opaque participants, and available
   mention/quote metadata. Managed guest lifecycle stays independent.

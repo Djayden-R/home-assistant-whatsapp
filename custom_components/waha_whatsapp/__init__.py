@@ -511,7 +511,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
 
 async def async_unload_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool:
     """Unload a WAHA WhatsApp config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        # A replacement runtime must not read or overwrite this ledger until
+        # every admitted send has persisted its final or uncertain outcome.
+        await entry.runtime_data.correlated_sends.async_stop()
+        entry.runtime_data.channel_registry.stop()
+        await entry.runtime_data.outbound_observer.async_stop()
+        await entry.runtime_data.channel_registry.async_stop()
+    return unloaded
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> None:

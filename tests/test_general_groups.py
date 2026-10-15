@@ -77,7 +77,9 @@ def make_manager(*, enabled=True, guest_group=None):
         subentries={subentry.subentry_id: subentry},
     )
     client = Client()
-    registry = channel.ChannelRegistry(None, entry, client, store=FakeStore())
+    registry = channel.ChannelRegistry(
+        SimpleNamespace(data={}), entry, client, store=FakeStore()
+    )
     manager = groups.GeneralGroupManager(
         None,
         entry,
@@ -162,7 +164,9 @@ async def test_routes_and_quote_tokens_survive_reload_with_intact_secret():
     token = await registry.async_remember_message(
         "message-a", destination.conversation_id
     )
-    restored = channel.ChannelRegistry(None, entry, client, store=registry._store)
+    restored = channel.ChannelRegistry(
+        registry._hass, entry, client, store=registry._store
+    )
     manager2 = groups.GeneralGroupManager(None, entry, client, restored)
     await restored.async_start()
     assert restored.resolve_message(token, destination.conversation_id) is None

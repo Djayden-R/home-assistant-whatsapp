@@ -96,6 +96,7 @@ def _handlers():
         _LOGGER=logging.getLogger(__name__),
         MIN_GOWS_VERSION=(2026, 8, 2),
         MAX_WEBHOOK_BODY_BYTES=256 * 1024,
+        PLATFORMS=["notify"],
         HTTPStatus=HTTPStatus,
         Response=Response,
         cast=cast,
@@ -110,6 +111,7 @@ def _handlers():
             "_loaded_entry",
             "_supports_guest_webhooks",
             "_async_handle_waha_webhook",
+            "async_unload_entry",
         },
         namespace,
     )
@@ -222,6 +224,55 @@ async def _send(env, **kwargs):
     return await env.handlers["_async_handle_send_to_conversation"](
         _call(env, **kwargs)
     )
+
+
+@pytest.mark.asyncio
+async def test_unload_drains_admitted_send_before_replacement(monkeypatch):
+    """Reload cannot replace a runtime while its keyed outcome can still write."""
+    env = await _setup(monkeypatch)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    platforms_unloaded = asyncio.Event()
+
+    async def provider(*_args, **_kwargs):
+        entered.set()
+        await release.wait()
+        return {"id": "accepted-before-unload"}
+
+    async def unload(_entry, _platforms):
+        platforms_unloaded.set()
+        return True
+
+    env.client._request.side_effect = provider
+    env.hass.config_entries.async_unload_platforms = unload
+    send = asyncio.create_task(_send(env, key="inflight"))
+    await entered.wait()
+    unloading = asyncio.create_task(
+        env.handlers["async_unload_entry"](env.hass, env.entry)
+    )
+    await platforms_unloaded.wait()
+    await asyncio.sleep(0)
+    assert not unloading.done()
+    blocked = await _send(env, key="after-unload-begins")
+    assert blocked["status"] == "failed"
+    assert blocked["error_code"] == "channel_unavailable"
+    release.set()
+    accepted = await send
+    assert accepted["status"] == "accepted"
+    assert await unloading is True
+    assert (await _send(env, key="inflight")) == {**accepted, "replayed": True}
+    env.client._request.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_platform_unload_preserves_keyed_admission(monkeypatch):
+    """An unsuccessful HA unload leaves the current communication path usable."""
+    env = await _setup(monkeypatch)
+    env.hass.config_entries.async_unload_platforms = AsyncMock(return_value=False)
+    assert await env.handlers["async_unload_entry"](env.hass, env.entry) is False
+    result = await _send(env, key="still-available")
+    assert result["status"] == "accepted"
+    env.client._request.assert_awaited_once()
 
 
 @pytest.mark.asyncio

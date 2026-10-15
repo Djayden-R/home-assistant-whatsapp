@@ -413,3 +413,45 @@ async def test_owns_request_is_read_only_scoped_and_honors_settled_retention(
     assert store.data == before
     assert store.save_count == save_count
     assert instance.diagnostics["records"] == 2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stop_keeps_fence_and_replacement_waits_for_drain():
+    hass = SimpleNamespace(data={})
+    entry = SimpleNamespace(entry_id="entry-a")
+    store = FakeStore()
+    old = correlated.CorrelatedSendManager(hass, entry, store=store)
+    await old.async_start()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_send():
+        entered.set()
+        await release.wait()
+        return "msg_accepted"
+
+    admitted = asyncio.create_task(execute(old, slow_send))
+    await entered.wait()
+    stop = asyncio.create_task(old.async_stop())
+    await asyncio.sleep(0)
+    stop.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stop
+    replacement = correlated.CorrelatedSendManager(hass, entry, store=store)
+    start = asyncio.create_task(replacement.async_start())
+    await asyncio.sleep(0)
+    callback = AsyncMock(return_value="msg_not_sent")
+    try:
+        assert not start.done()
+        assert (await execute(old, callback, key="late"))[
+            "error_code"
+        ] == "channel_unavailable"
+        assert (await execute(old, callback))["status"] == "pending"
+        callback.assert_not_awaited()
+    finally:
+        release.set()
+    await admitted
+    await start
+    assert (await execute(replacement, callback))["status"] == "accepted"
+    assert (await execute(old, callback))["replayed"]
+    callback.assert_not_awaited()

@@ -37,13 +37,39 @@ class OutboundObserver:
         self._hass = hass
         self._entry = entry
         self._registry = channel_registry
+        self._tracking_tasks: set[asyncio.Task[str | None]] = set()
+        self._stopping = False
         self.observed_count = 0
         self.observation_failure_count = 0
         self.tracking_failure_count = 0
 
     @property
     def enabled(self) -> bool:
-        return self._entry.options.get("outbound_observations_enabled") is True
+        return (
+            not self._stopping
+            and self._entry.options.get("outbound_observations_enabled") is True
+        )
+
+    async def async_stop(self) -> None:
+        """Fence new tracking immediately, then drain physical writes on unload.
+
+        Household sends keep their short optional-tracking deadline. Lifecycle
+        shutdown alone waits for old writes, preventing a retired observer from
+        writing through a replacement runtime's private channel state.
+        """
+        self._stopping = True
+        if not self._tracking_tasks:
+            return
+        drain = asyncio.gather(*self._tracking_tasks, return_exceptions=True)
+        cancelled = False
+        while not drain.done():
+            try:
+                await asyncio.shield(drain)
+            except asyncio.CancelledError:
+                # Never cancel a physical write or let shutdown abandon it.
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
 
     @property
     def health(self) -> str:
@@ -163,6 +189,8 @@ class OutboundObserver:
         client_request_id: str | None,
         content_redacted: bool,
     ) -> None:
+        if self._stopping:
+            return
         if not conversation_id:
             if self.enabled:
                 self.observation_failure_count += 1
@@ -170,13 +198,21 @@ class OutboundObserver:
         message_id = None
         if isinstance(result, WahaMessage) and result.id is not None:
             try:
+                tracking = asyncio.create_task(
+                    self._async_track(result.id, conversation_id)
+                )
+                self._tracking_tasks.add(tracking)
+                tracking.add_done_callback(self._tracking_done)
                 async with asyncio.timeout(_OBSERVATION_TIMEOUT_SECONDS):
-                    message_id = await self._registry.async_remember_message(
-                        result.id, conversation_id
-                    )
+                    # Optional tracking must not inherit a durable Store's
+                    # cancellation drain. Keep the actual disk write supervised
+                    # while returning the accepted send after the deadline.
+                    message_id = await asyncio.shield(tracking)
+                    if message_id is None:
+                        self.tracking_failure_count += 1
             except Exception, asyncio.CancelledError:
                 self.tracking_failure_count += 1
-        if not self.enabled:
+        if self._stopping or not self.enabled:
             return
         # Build from an allowlist. A callback/provider object cannot leak extra
         # fields (raw IDs, request headers, action IDs) into the public event.
@@ -207,6 +243,24 @@ class OutboundObserver:
             event["content_redacted"] = True
         self._hass.bus.async_fire(EVENT_WAHA_WHATSAPP, deepcopy(event))
         self.observed_count += 1
+
+    async def _async_track(self, raw_id: str, conversation_id: str) -> str | None:
+        """Return a content-free failure result, including after the deadline.
+
+        Python's shield can explicitly log late inner exceptions even after a
+        done callback retrieves them. Contain failures inside the shielded task
+        as well, so provider/storage details never reach that logging path.
+        """
+        try:
+            return await self._registry.async_remember_message(raw_id, conversation_id)
+        except Exception, asyncio.CancelledError:
+            return None
+
+    def _tracking_done(self, task: asyncio.Task[str | None]) -> None:
+        """Drain late failures without logging private storage/provider details."""
+        self._tracking_tasks.discard(task)
+        with suppress(Exception, asyncio.CancelledError):
+            task.exception()
 
 
 async def async_send_observed(
