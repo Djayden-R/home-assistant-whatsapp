@@ -7,6 +7,7 @@ import re
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import partial
 from http import HTTPStatus
 from typing import cast
 
@@ -90,6 +91,15 @@ from .guest_manager import MIN_GOWS_VERSION, GuestGroupManager
 from .guest_registry import GuestRegistry
 from .helpers import normalize_recipient, render_notification
 from .inbound import WahaInboundManager
+from .media import MAX_BYTES, MediaError, MediaManager
+from .media_http import register_media_views
+from .media_routes import (
+    async_authorize_media,
+    async_media_backend_ready,
+    async_media_send_route,
+    media_observation_binding,
+)
+from .media_send import async_send_media
 from .migration import (
     legacy_group_unique_ids,
     with_webhook_credentials,
@@ -170,6 +180,33 @@ UNREGISTER_COMMAND_SCHEMA = vol.Schema(
 
 MAX_WEBHOOK_BODY_BYTES = 256 * 1024
 
+MEDIA_ID = vol.All(cv.string, vol.Length(min=1, max=128))
+GET_MEDIA_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_CONFIG_ENTRY_ID): MEDIA_ID,
+        vol.Required(ATTR_CONVERSATION_ID): MEDIA_ID,
+        vol.Required("message_id"): MEDIA_ID,
+        vol.Required("attachment_id"): MEDIA_ID,
+        vol.Optional("max_bytes"): vol.All(int, vol.Range(min=1, max=MAX_BYTES)),
+    }
+)
+SEND_MEDIA_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_CONFIG_ENTRY_ID): MEDIA_ID,
+        vol.Required(ATTR_CONVERSATION_ID): MEDIA_ID,
+        vol.Required("upload_id"): MEDIA_ID,
+        vol.Required("kind"): vol.In(("image", "file", "audio")),
+        vol.Required(ATTR_CLIENT_REQUEST_ID): MEDIA_ID,
+        vol.Optional("as_voice_note", default=False): cv.boolean,
+        vol.Optional("caption"): vol.All(cv.string, vol.Length(max=1024)),
+        vol.Optional(ATTR_REPLY_TO_MESSAGE_ID): MEDIA_ID,
+        vol.Optional(ATTR_ORIGIN, default="unknown"): vol.In(
+            ("automation", "application", "human", "unknown")
+        ),
+        vol.Optional(ATTR_CONTENT_REDACTED, default=False): cv.boolean,
+    }
+)
+
 SEND_POLL_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_ENTITY_ID): cv.entity_id,
@@ -203,6 +240,7 @@ class WahaRuntimeData:
     correlated_sends: CorrelatedSendManager
     general_groups: GeneralGroupManager
     general_group_inbound: WahaGeneralGroupInboundManager
+    media_manager: MediaManager | None = None
 
 
 type WahaConfigEntry = ConfigEntry[WahaRuntimeData]
@@ -210,6 +248,21 @@ type WahaConfigEntry = ConfigEntry[WahaRuntimeData]
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up integration-level WAHA actions."""
+    register_media_views(hass)
+    hass.services.async_register(
+        DOMAIN,
+        "get_media",
+        _async_handle_get_media,
+        schema=GET_MEDIA_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "send_media_to_conversation",
+        _async_handle_send_media,
+        schema=SEND_MEDIA_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
     hass.services.async_register(
         DOMAIN,
         SERVICE_SEND_MESSAGE,
@@ -372,8 +425,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
     outbound_observer = OutboundObserver(hass, entry, channel_registry)
     correlated_sends = CorrelatedSendManager(hass, entry)
     await correlated_sends.async_start()
+    media_manager = MediaManager(
+        hass,
+        entry,
+        client,
+        authorize=partial(async_authorize_media, entry),
+        backend_ready=partial(async_media_backend_ready, entry),
+        observe_binding=partial(media_observation_binding, entry),
+    )
+    if entry.options.get("media_enabled") is True:
+        try:
+            await media_manager.async_start()
+        except MediaError:
+            _LOGGER.warning("WAHA media storage unavailable; media disabled")
     general_group_inbound = WahaGeneralGroupInboundManager(
-        hass, entry, general_groups, channel_registry
+        hass, entry, general_groups, channel_registry, media_manager=media_manager
     )
     inbound_manager = WahaInboundManager(
         hass,
@@ -382,6 +448,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
         guest_registry,
         refresh_guest_membership=lambda: guest_manager.async_reconcile(force=True),
         command_registry=command_registry,
+        media_manager=media_manager,
     )
     guest_inbound_manager = WahaGuestInboundManager(
         hass,
@@ -391,6 +458,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
         verified_bot_jid=session.account_id or "",
         refresh_membership=lambda: guest_manager.async_reconcile(force=True),
         command_registry=command_registry,
+        media_manager=media_manager,
     )
     webhook_id = entry.data[CONF_WEBHOOK_ID]
     guest_events_requested = entry.options.get(CONF_GUEST_GROUP_ENABLED) is True
@@ -430,6 +498,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
         webhook.async_unregister(hass, webhook_id)
         poll_manager.stop()
         channel_registry.stop()
+        await media_manager.async_stop()
         raise ConfigEntryNotReady(
             f"Unable to configure the private WAHA webhook: {err}"
         ) from err
@@ -437,6 +506,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
         webhook.async_unregister(hass, webhook_id)
         poll_manager.stop()
         channel_registry.stop()
+        await media_manager.async_stop()
         raise
 
     if guest_events_capable:
@@ -477,6 +547,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
         correlated_sends,
         general_groups,
         general_group_inbound,
+        media_manager,
     )
     entry.async_on_unload(lambda: webhook.async_unregister(hass, webhook_id))
     entry.async_on_unload(poll_manager.stop)
@@ -516,6 +587,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> boo
         # A replacement runtime must not read or overwrite this ledger until
         # every admitted send has persisted its final or uncertain outcome.
         await entry.runtime_data.correlated_sends.async_stop()
+        if manager := getattr(entry.runtime_data, "media_manager", None):
+            await manager.async_stop()
         entry.runtime_data.channel_registry.stop()
         await entry.runtime_data.outbound_observer.async_stop()
         await entry.runtime_data.channel_registry.async_stop()
@@ -525,6 +598,22 @@ async def async_unload_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> boo
 async def _async_reload_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> None:
     """Reload individual recipient entities after entry changes."""
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> None:
+    """Remove this entry's private media without touching backend/session data."""
+    manager = getattr(getattr(entry, "runtime_data", None), "media_manager", None)
+    if manager is None:
+        manager = MediaManager(
+            hass,
+            entry,
+            None,
+            authorize=partial(async_authorize_media, entry),
+            backend_ready=partial(async_media_backend_ready, entry),
+            observe_binding=partial(media_observation_binding, entry),
+        )
+        await manager.async_start()
+    await manager.async_remove_entry()
 
 
 async def _async_handle_send_message(call: ServiceCall) -> ServiceResponse:
@@ -870,7 +959,100 @@ async def _async_handle_get_channel_capabilities(call: ServiceCall) -> ServiceRe
     capabilities["correlated_sends"] = (
         connected and runtime.correlated_sends.persistence_available
     )
+    capabilities["media_send"] = False
+    if manager := getattr(runtime, "media_manager", None):
+        effective = connected and manager.enabled and await manager.backend_ready()
+        capabilities["media_contract"] = dict(manager.capabilities)
+        capabilities["media_retrieval"] = bool(effective)
+        capabilities["media_send"] = bool(
+            effective and runtime.correlated_sends.persistence_available
+        )
+        contract = capabilities.get("media_contract", {})
+        contract["voice_note_detection"] = bool(effective)
+        contract["voice_note_send"] = capabilities["media_send"]
+        if not effective:
+            contract["inbound_kinds"] = []
+        if not capabilities["media_send"]:
+            contract["outbound_kinds"] = []
+            contract["caption_kinds"] = []
     return capabilities
+
+
+async def _async_media_principal(call: ServiceCall) -> str:
+    user_id = call.context.user_id
+    user = await call.hass.auth.async_get_user(user_id) if user_id else None
+    if user is None or not user.is_active or not user.is_admin:
+        raise MediaError("not_authorized", http_status=403)
+    return user.id
+
+
+async def _async_handle_get_media(call: ServiceCall) -> ServiceResponse:
+    """Resolve one already observed, exactly scoped attachment."""
+    try:
+        await _async_media_principal(call)
+        entry = _loaded_entry(call.hass, call.data[CONF_CONFIG_ENTRY_ID])
+        manager = entry.runtime_data.media_manager
+        if manager is None:
+            raise MediaError("media_disabled")
+        result = await manager.async_get_media(
+            call.data[ATTR_CONVERSATION_ID],
+            call.data["message_id"],
+            call.data["attachment_id"],
+            call.data.get("max_bytes"),
+        )
+        await _async_media_principal(call)
+        if entry.runtime_data.media_manager is not manager:
+            raise MediaError("channel_unavailable", retryable=True)
+        return result
+    except MediaError as err:
+        return err.as_dict()
+    except ServiceValidationError:
+        return MediaError("invalid_conversation").as_dict()
+
+
+async def _async_handle_send_media(call: ServiceCall) -> ServiceResponse:
+    """Submit one staged attachment through the durable conversation ledger."""
+    try:
+        principal = await _async_media_principal(call)
+        entry = _loaded_entry(call.hass, call.data[CONF_CONFIG_ENTRY_ID])
+
+        async def _route(conversation_id, transmit):
+            # A queued transfer must not retain a revoked administrator grant.
+            await _async_media_principal(call)
+            binding = media_observation_binding(entry, conversation_id)
+
+            async def _authorized_transmit(chat_id, conversation_type, redacted):
+                # Roster verification also awaits I/O. Fence principal and
+                # configuration changes during those reads before submitting.
+                await _async_media_principal(call)
+                if binding is None or (
+                    media_observation_binding(entry, conversation_id) != binding
+                ):
+                    raise MediaError("invalid_conversation")
+                return await transmit(chat_id, conversation_type, redacted)
+
+            return await async_media_send_route(
+                entry, conversation_id, _authorized_transmit
+            )
+
+        return await async_send_media(
+            entry,
+            principal,
+            call.data,
+            async_route=_route,
+        )
+    except MediaError as err:
+        code = err.code
+    except ServiceValidationError:
+        code = "invalid_conversation"
+    return {
+        "conversation_id": call.data.get(ATTR_CONVERSATION_ID),
+        "client_request_id": call.data.get(ATTR_CLIENT_REQUEST_ID),
+        "message_id": None,
+        "status": "failed",
+        "error_code": code,
+        "replayed": False,
+    }
 
 
 async def _async_require_command_admin(call: ServiceCall) -> None:

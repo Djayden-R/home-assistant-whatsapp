@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import Context
 
 from .const import CHANNEL_SCHEMA_VERSION, CONF_SESSION, EVENT_WAHA_WHATSAPP
+from .media import media_metadata
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -59,6 +60,7 @@ class WahaInboundManager:
         guest_registry: GuestRegistry | None = None,
         refresh_guest_membership: Callable[[], Awaitable[dict[str, Any]]] | None = None,
         command_registry: CommandRegistry | None = None,
+        media_manager: Any | None = None,
     ) -> None:
         """Keep routing and deduplication delegated to the channel registry."""
         self._hass = hass
@@ -67,6 +69,7 @@ class WahaInboundManager:
         self._guest_registry = guest_registry
         self._refresh_guest_membership = refresh_guest_membership
         self._command_registry = command_registry
+        self._media_manager = media_manager
         self._rejections: Counter[str] = Counter()
         self.accepted_count = 0
 
@@ -178,6 +181,13 @@ class WahaInboundManager:
             self._reject("invalid_event_id")
             return
 
+        media_route_binding = (
+            self._media_manager.capture_observation_binding(
+                contact.conversation_id, raw_participant=payload.get("participant")
+            )
+            if self._media_manager is not None
+            else None
+        )
         if event == "message":
             message = detail["message"]
             message["id"] = await self._registry.async_remember_message(
@@ -186,6 +196,15 @@ class WahaInboundManager:
         if not await self._registry.async_claim_event(raw_event_id):
             self._reject("duplicate")
             return
+
+        if event == "message" and payload.get("hasMedia") and self._media_manager:
+            detail["message"]["attachments"] = await self._media_manager.async_observe(
+                payload,
+                detail["message"]["id"],
+                contact.conversation_id,
+                raw_chat_id=payload.get("chatId") or raw_chat,
+                route_binding=media_route_binding,
+            )
 
         event_data: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
@@ -299,7 +318,7 @@ class WahaInboundManager:
                 if not _MIME_TYPE.fullmatch(mime):
                     self._reject("invalid_media")
                     return None
-            kind = _media_kind(mime)
+            kind = media_metadata(payload)["kind"]
             message["kind"] = kind
             if mime is not None:
                 message["mime_type"] = mime

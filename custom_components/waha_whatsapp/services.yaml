@@ -176,3 +176,79 @@ list_commands:
       selector:
         config_entry:
           integration: waha_whatsapp
+
+get_media:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: waha_whatsapp
+    conversation_id:
+      required: true
+      selector:
+        text:
+    message_id:
+      required: true
+      selector:
+        text:
+    attachment_id:
+      required: true
+      selector:
+        text:
+    max_bytes:
+      selector:
+        number:
+          min: 1
+          max: 26214400
+          mode: box
+
+send_media_to_conversation:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: waha_whatsapp
+    conversation_id:
+      required: true
+      selector:
+        text:
+    upload_id:
+      required: true
+      selector:
+        text:
+    kind:
+      required: true
+      selector:
+        select:
+          options:
+            - image
+            - file
+            - audio
+    as_voice_note:
+      default: false
+      selector:
+        boolean:
+    client_request_id:
+      required: true
+      selector:
+        text:
+    caption:
+      selector:
+        text:
+    reply_to_message_id:
+      selector:
+        text:
+    origin:
+      selector:
+        select:
+          options:
+            - automation
+            - application
+            - human
+            - unknown
+    content_redacted:
+      default: false
+      selector:
+        boolean:

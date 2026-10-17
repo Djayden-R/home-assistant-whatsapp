@@ -50,6 +50,11 @@ async def async_get_config_entry_diagnostics(
         },
         "outbound_observations": _outbound_snapshot(entry),
         "correlated_sends": entry.runtime_data.correlated_sends.diagnostics,
+        "media": (
+            entry.runtime_data.media_manager.diagnostics
+            if getattr(entry.runtime_data, "media_manager", None) is not None
+            else {"enabled": False}
+        ),
         "managed_guest_group": {
             "ready": guest["ready"],
             "confirmed": guest["confirmed"],

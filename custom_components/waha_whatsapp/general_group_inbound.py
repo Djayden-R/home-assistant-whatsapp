@@ -42,11 +42,13 @@ class WahaGeneralGroupInboundManager:
         entry: ConfigEntry,
         manager: GeneralGroupManager,
         channel_registry: ChannelRegistry,
+        media_manager: Any | None = None,
     ) -> None:
         self._hass = hass
         self._entry = entry
         self._groups = manager
         self._channel = channel_registry
+        self._media_manager = media_manager
         self._parser = WahaInboundManager(hass, entry, channel_registry)
 
     async def async_handle_payload(self, data: Mapping[str, Any]) -> bool:
@@ -103,6 +105,18 @@ class WahaGeneralGroupInboundManager:
             ),
             "identity_status": "verified" if identity else "unresolved",
         }
+        media_participant = (
+            payload.get("participant")
+            or payload.get("to")
+            or (raw_from if raw_from != destination.group_jid else None)
+        )
+        media_route_binding = (
+            self._media_manager.capture_observation_binding(
+                destination.conversation_id, raw_participant=media_participant
+            )
+            if self._media_manager is not None
+            else None
+        )
         if event == "message":
             detail = self._parser._message_detail(payload)
             if detail is None:
@@ -128,6 +142,17 @@ class WahaGeneralGroupInboundManager:
                 return False
         if not await self._channel.async_claim_event(event_id):
             return False
+        if event == "message" and payload.get("hasMedia") and self._media_manager:
+            detail["message"]["attachments"] = await self._media_manager.async_observe(
+                payload,
+                detail["message"]["id"],
+                destination.conversation_id,
+                raw_chat_id=destination.group_jid,
+                raw_participant=media_participant,
+                route_binding=media_route_binding,
+                participant_id=sender["participant_id"],
+            )
+
         event_data = {
             "schema_version": CHANNEL_SCHEMA_VERSION,
             "event_id": self._channel.event_token(event_id),

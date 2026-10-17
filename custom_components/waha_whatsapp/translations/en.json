@@ -192,14 +192,16 @@
           "guest_group_excluded_admin_user_ids": "Administrators to exclude",
           "guest_group_name": "Group name",
           "outbound_observations_enabled": "Publish outbound communication observations",
-          "guest_group_observation_content_redacted": "Redact managed guest-group observed content"
+          "guest_group_observation_content_redacted": "Redact managed guest-group observed content",
+          "media_enabled": "Enable authenticated media transport"
         },
         "data_description": {
           "guest_group_enabled": "Off by default. Enabling starts a separate confirmation step before any group provisioning can begin.",
           "guest_group_excluded_admin_user_ids": "Explicitly exclude each unmapped administrator you do not want to add. You can instead map them to a Person and a WhatsApp recipient, then reopen this form.",
           "guest_group_name": "Name for the one WhatsApp guest group managed by this connection.",
           "outbound_observations_enabled": "Off by default. Publish the actual recipient-scoped content and outcome of configured sends on the WAHA event bus. Use recipient redaction for sensitive content.",
-          "guest_group_observation_content_redacted": "When outbound observations are enabled, publish content-free markers for managed guest-group notifications and replies."
+          "guest_group_observation_content_redacted": "When outbound observations are enabled, publish content-free markers for managed guest-group notifications and replies.",
+          "media_enabled": "Off by default. Allow active Home Assistant administrators to retrieve and stage bounded attachments for configured conversations. Automatic WAHA event downloads can remain disabled."
         },
         "description": "Mapped administrators for this WAHA connection: {mapped_admins}. Unmapped or ambiguous administrators: {unmapped_admins}. No WhatsApp group is created before the final confirmation.",
         "title": "Managed guest group"
@@ -362,6 +364,78 @@
         "config_entry_id": {
           "name": "WAHA connection",
           "description": "WAHA connection whose active capabilities are requested."
+        }
+      }
+    },
+    "get_media": {
+      "name": "Get media",
+      "description": "Active administrators only. Retrieve one observed attachment and return an authenticated HA download path, never binary content.",
+      "fields": {
+        "config_entry_id": {
+          "name": "WAHA connection",
+          "description": "Loaded WAHA integration connection."
+        },
+        "conversation_id": {
+          "name": "Conversation",
+          "description": "Exact opaque enabled conversation ID from the channel."
+        },
+        "message_id": {
+          "name": "Message",
+          "description": "Opaque source message ID in this conversation."
+        },
+        "attachment_id": {
+          "name": "Attachment",
+          "description": "Opaque observed attachment ID bound to this message."
+        },
+        "max_bytes": {
+          "name": "Byte ceiling",
+          "description": "Optional caller limit, at most 26214400 bytes."
+        }
+      }
+    },
+    "send_media_to_conversation": {
+      "name": "Send staged media to conversation",
+      "description": "Active administrators only. Submit one destination-bound upload using durable request correlation. Acceptance is not delivery.",
+      "fields": {
+        "config_entry_id": {
+          "name": "WAHA connection",
+          "description": "Loaded WAHA integration connection."
+        },
+        "conversation_id": {
+          "name": "Conversation",
+          "description": "Exact opaque enabled conversation ID from the channel."
+        },
+        "upload_id": {
+          "name": "Staged upload",
+          "description": "Opaque upload ID staged by this HA administrator for this destination."
+        },
+        "kind": {
+          "name": "Media kind",
+          "description": "image, file, or audio; must match verified staged content."
+        },
+        "as_voice_note": {
+          "name": "Native voice note",
+          "description": "Audio only. Requires verified Ogg/Opus; no automatic conversion."
+        },
+        "client_request_id": {
+          "name": "Request ID",
+          "description": "Required stable request ID, 1–128 characters. Reuse after uncertain outcomes; do not create a new send."
+        },
+        "caption": {
+          "name": "Caption",
+          "description": "Optional caption, at most 1024 characters. Native voice notes reject captions."
+        },
+        "reply_to_message_id": {
+          "name": "Quoted message",
+          "description": "Optional opaque message ID in this same conversation."
+        },
+        "origin": {
+          "name": "Origin",
+          "description": "Attribution: automation, application, human, or unknown."
+        },
+        "content_redacted": {
+          "name": "Redact observation",
+          "description": "Omit caption and attachment metadata from outbound observations."
         }
       }
     }

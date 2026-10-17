@@ -226,6 +226,25 @@ class OutboundObserver:
                 message["text"] = content["text"]
             if content["kind"] == "poll":
                 message["options"] = content["options"]
+            if "caption" in content and content["caption"] is not None:
+                message["caption"] = content["caption"]
+            if isinstance(content.get("attachments"), list):
+                # Never forward a staged upload ID, path, URL, or provider
+                # fields. Redacted workflows omit all content descriptors.
+                fields = {
+                    "kind",
+                    "mime_type",
+                    "file_name",
+                    "size_bytes",
+                    "sha256",
+                    "voice_note",
+                    "duration_ms",
+                }
+                message["attachments"] = [
+                    {key: value for key, value in attachment.items() if key in fields}
+                    for attachment in content["attachments"][:1]
+                    if isinstance(attachment, dict)
+                ]
         event = {
             "schema_version": 1,
             "event_id": f"evt_{uuid4().hex}",

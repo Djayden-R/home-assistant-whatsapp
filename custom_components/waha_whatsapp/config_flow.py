@@ -389,6 +389,7 @@ class WahaWhatsAppOptionsFlow(OptionsFlow):
                     errors["base"] = "unresolved_admins"
                 else:
                     proposal = {
+                        "media_enabled": user_input.get("media_enabled") is True,
                         CONF_GUEST_GROUP_ENABLED: enabled,
                         CONF_GUEST_GROUP_NAME: name or DEFAULT_GUEST_GROUP_NAME,
                         CONF_GUEST_GROUP_EXCLUDED_ADMIN_USER_IDS: sorted(excluded),
@@ -592,6 +593,9 @@ def _guest_group_options_schema(
 ) -> vol.Schema:
     """Offer explicit exclusions only for currently unmapped HA admins."""
     fields: dict[Any, Any] = {
+        vol.Optional(
+            "media_enabled", default=options.get("media_enabled", False)
+        ): BooleanSelector(),
         vol.Optional(
             "outbound_observations_enabled",
             default=options.get("outbound_observations_enabled", False),

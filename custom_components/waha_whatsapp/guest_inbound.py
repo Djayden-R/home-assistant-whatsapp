@@ -49,6 +49,7 @@ class WahaGuestInboundManager:
         verified_bot_jid: str,
         refresh_membership: Callable[[], Awaitable[dict[str, Any]]] | None = None,
         command_registry: CommandRegistry | None = None,
+        media_manager: Any | None = None,
     ) -> None:
         self._hass = hass
         self._entry = entry
@@ -57,6 +58,7 @@ class WahaGuestInboundManager:
         self._verified_bot_jid = verified_bot_jid
         self._refresh_membership = refresh_membership
         self._command_registry = command_registry
+        self._media_manager = media_manager
         # Reuse the existing, intentionally narrow content/reaction parser.
         self._detail_parser = WahaInboundManager(hass, entry, channel_registry)
 
@@ -172,6 +174,15 @@ class WahaGuestInboundManager:
         if not isinstance(conversation_id, str):
             return False
 
+        media_participant = sender_alias if is_group else payload.get("participant")
+        media_route_binding = (
+            self._media_manager.capture_observation_binding(
+                conversation_id, raw_participant=media_participant
+            )
+            if self._media_manager is not None
+            else None
+        )
+
         sender: dict[str, str] = {
             "participant_id": member["participant_id"],
             "direct_conversation_id": member["direct_conversation_id"],
@@ -219,6 +230,17 @@ class WahaGuestInboundManager:
             )
         if not await self._channel.async_claim_event(raw_event_id):
             return False
+
+        if event == "message" and payload.get("hasMedia") and self._media_manager:
+            detail["message"]["attachments"] = await self._media_manager.async_observe(
+                payload,
+                detail["message"]["id"],
+                conversation_id,
+                raw_chat_id=group_jid if is_group else (chat_id or raw_from),
+                raw_participant=media_participant,
+                route_binding=media_route_binding,
+                participant_id=member["participant_id"],
+            )
 
         event_data = {
             "schema_version": CHANNEL_SCHEMA_VERSION,
