@@ -291,7 +291,10 @@ traces.
 For non-text messages, the existing content parser can emit a metadata-only
 placeholder such as `message.kind: audio`, `image`, `file`, or `unknown`, with
 an optional normalized `message.mime_type` and `message.caption`. It does not
-download media or expose its URL or binary data.
+download media during event publication or expose its URL or binary data.
+Integration 1.8.0 adds optional `message.attachments` and the authenticated
+[media API](MEDIA_API.md). Retrieval and staging revalidate the current group,
+sender membership and exact route; media sends retain the private-route guards.
 
 ## Query current membership
 

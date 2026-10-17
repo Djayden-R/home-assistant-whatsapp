@@ -1,6 +1,8 @@
 # WhatsApp communication API
 
-Integration **1.7.0** adds these backward-compatible schema-v1 interfaces.
+Integration **1.7.0** added these backward-compatible schema-v1 interfaces.
+Integration **1.8.0** adds the optional [media contract](MEDIA_API.md), including
+attachment descriptors, authenticated retrieval/staging, and correlated sends.
 Source-level validation is complete; live Home Assistant/WhatsApp verification
 remains required. This integration transports messages and inert command
 requests. Consumers own execution policy, authorization, retention, inboxes,
@@ -22,8 +24,10 @@ for code that subscribes to it. Other HA code can publish the same event name.
 - General groups and their mention parser require **WAHA GOWS 2026.8.2 or
   newer**, including builds with a `+haos` suffix. The exact group, connected
   account, and v2 roster must be verifiable. Other engines fail closed.
-- No HAOS app runtime change or app version bump is required. The packaged app
-  currently pins WAHA GOWS 2026.9.1, which meets the version gate.
+- These text/group interfaces require no additional app runtime change. The
+  packaged app pins WAHA GOWS 2026.9.1, which meets the version gate. The 1.8.0
+  [media extension](MEDIA_API.md) additionally requires a matching media origin;
+  app 0.2.4 prepares that compatible fix with the same upstream image.
 - Existing contacts, poll actions, registered commands, and managed guest
   lifecycle remain unchanged. No group is discovered or enabled automatically.
   No deployment, account reconnection, or consumer activation is required to
@@ -65,6 +69,7 @@ group before reporting group capability:
   "delivery_receipts": false,
   "message_changes": false,
   "media_retrieval": false,
+  "media_send": false,
   "transport_replay": false,
   "manual_outbound_observations": false,
   "observation_health": "ready",
@@ -86,10 +91,11 @@ observation health for this runtime; diagnostics contain aggregate counters
 without content, keys, routes, or provider error text. Missing idempotency
 persistence disables new keyed sends while legacy sends remain independent.
 
-Receipts, edits/deletions, media retrieval, manual-account observations, and
-replay are unavailable in this release. An accepted send does not establish
-delivery or read status. No media URLs, downloads, transcription, historical
-imports, or long-term archive are added.
+Media flags default to false and gain an effective `media_contract` when the
+runtime has a media manager; see [media discovery and limits](MEDIA_API.md).
+Receipts, edits/deletions, manual-account observations, and event replay remain
+unavailable. An accepted send does not establish delivery or read status.
+Transcription, historical imports and long-term archives remain consumer work.
 
 ## Outbound observations
 

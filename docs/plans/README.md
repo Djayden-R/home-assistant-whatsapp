@@ -20,9 +20,9 @@ fields/actions are not proof of what is implemented or released.
   GOWS 2026.9.1; the required API floor remains 2026.8.2. Neither source
   inspection nor unit tests substitute for the manual live test.
 
-Guest groups take priority over the previously proposed voice-transcription
-phase. Voice transcription, command execution, access provisioning, and sidebar
-improvements are not part of this plan.
+The generic [media transport](../MEDIA_API.md) extends those routes in 1.8.0.
+Voice transcription, command execution, access provisioning, and sidebar
+improvements are not part of this transport implementation.
 
 ## Earlier design records
 
