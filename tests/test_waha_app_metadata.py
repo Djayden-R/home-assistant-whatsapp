@@ -27,13 +27,13 @@ def test_app_image_and_upstream_are_version_pinned() -> None:
     config = _config()
     dockerfile = (APP_DIR / "Dockerfile").read_text()
 
-    assert config["version"] == "0.2.3"
+    assert config["version"] == "0.2.4"
     assert config["image"] == "ghcr.io/sebastian-greco/ha-waha"
     assert re.fullmatch(
         r"FROM devlikeapro/waha:gows-2026\.9\.1@sha256:[a-f0-9]{64}",
         dockerfile.splitlines()[0],
     )
-    assert "ARG BUILD_VERSION=0.2.3" in dockerfile
+    assert "ARG BUILD_VERSION=0.2.4" in dockerfile
 
 
 def test_device_name_uses_supervisor_string_schema() -> None:

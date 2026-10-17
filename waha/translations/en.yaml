@@ -16,6 +16,6 @@ configuration:
     description: Use debug only temporarily because it produces significantly more output.
   download_media:
     name: Download incoming media
-    description: Keep disabled for the notification-only phase to reduce storage and data exposure.
+    description: Enables automatic event and API downloads. Keep disabled for per-message retrieval to limit storage and data exposure.
 network:
   3000/tcp: WAHA API and native dashboard; expose only on a trusted LAN when required.

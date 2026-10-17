@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.4
+
+- Set WAHA's generated media URL base to the same private add-on hostname the
+  integration discovers. The API still binds to `0.0.0.0`; file URLs no longer
+  inherit that listener-only address. The standalone fallback is loopback.
+- Keep WAHA event/API automatic media download defaults disabled unless the
+  existing `download_media` option is explicitly enabled. On-demand retrieval
+  can therefore use the message-level `downloadMedia=true` override.
+
 ## 0.2.3
 
 - Upgrade the bundled browserless WAHA GOWS engine to 2026.9.1. Upstream
@@ -11,8 +20,8 @@
   [2026.8.2](https://github.com/devlikeapro/waha/releases/tag/2026.8.2), and
   [2026.9.1](https://github.com/devlikeapro/waha/releases/tag/2026.9.1)
   release notes.
-- The companion HACS integration remains at 1.4.1. See `DOCS.md` for backup,
-  upgrade verification, and rollback cautions.
+- The companion HACS integration has a separate source/version lifecycle;
+  installing or upgrading this app does not deploy integration changes.
 - Apply the media-download option explicitly to WAHA's new event and API
   defaults, preserving disabled downloads by default.
 - Add startup/shutdown and credential-redaction regressions plus a real-image,

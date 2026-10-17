@@ -1,5 +1,5 @@
 name: WAHA for Home Assistant
-version: "0.2.3"
+version: "0.2.4"
 slug: waha
 description: Self-hosted WhatsApp API with a Home Assistant sidebar control panel
 url: https://github.com/sebastian-greco/home-assistant-whatsapp
