@@ -4,7 +4,7 @@ Status (2026-09-28): included in integration version 1.5.0, but a fresh live
 Home Assistant/WhatsApp trial has not been completed. Confirm your installed
 HACS version before enabling it. It requires a WAHA GOWS server at version
 2026.8.2 or newer. The bundled HAOS app in this source tree is
-currently pinned to GOWS 2026.9.1 (app 0.2.3); check **WAHA → Version** on the
+currently pinned to GOWS 2026.9.1 (app source 0.2.4); check **WAHA → Version** on the
 actual installation. See the [live test checklist](GUEST_GROUP_HA_TEST.md)
 before enabling it on a real account.
 

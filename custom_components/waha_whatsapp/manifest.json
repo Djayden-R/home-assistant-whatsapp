@@ -3,10 +3,11 @@
   "name": "WAHA WhatsApp",
   "codeowners": ["@sebastian-greco"],
   "config_flow": true,
+  "dependencies": ["http"],
   "documentation": "https://github.com/sebastian-greco/home-assistant-whatsapp",
   "integration_type": "service",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/sebastian-greco/home-assistant-whatsapp/issues",
   "requirements": [],
-  "version": "1.7.0"
+  "version": "1.8.0"
 }

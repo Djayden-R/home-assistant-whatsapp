@@ -45,6 +45,17 @@ _CODES = frozenset(
         "rate_limited",
         "transport_failure",
         "outcome_unknown",
+        "invalid_request",
+        "not_authorized",
+        "media_not_found",
+        "media_expired",
+        "media_disabled",
+        "unsupported",
+        "unsupported_media_type",
+        "media_too_large",
+        "invalid_media",
+        "busy",
+        "storage_unavailable",
     }
 )
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
@@ -281,6 +292,32 @@ class CorrelatedSendManager:
             _encoded([self._entry_id, conversation_id, client_request_id])
         ).hexdigest()
 
+    def media_binding(
+        self,
+        conversation_id: str,
+        client_request_id: str,
+        upload_token: str,
+        principal_token: str,
+    ) -> dict[str, Any] | None:
+        """Resolve retained content facts only for a previously bound upload.
+
+        Tokens are one-way hashes, never upload IDs or HA user identifiers.
+        This permits a receipt replay after byte expiry without trusting an
+        unknown upload ID. Route authorization remains the caller's duty.
+        """
+        self._prune(time.time())
+        record = self._records.get(
+            self._request_token(conversation_id, client_request_id)
+        )
+        media = record.get("media") if record else None
+        if (
+            media is None
+            or media["principal_token"] != principal_token
+            or upload_token not in media["upload_tokens"]
+        ):
+            return None
+        return deepcopy(media)
+
     async def async_start(self) -> None:
         """Drain the previous runtime before loading this entry's ledger."""
         async with self._writer_slot.lock:
@@ -330,6 +367,8 @@ class CorrelatedSendManager:
         client_request_id: str,
         canonical_request: Mapping[str, Any],
         async_send: Callable[[], Awaitable[Any]],
+        *,
+        media_binding: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Replay the saved state, or durably claim and execute one send.
 
@@ -351,6 +390,8 @@ class CorrelatedSendManager:
         request.setdefault("reply_to_message_id", None)
         request.setdefault("origin", "unknown")
         digest = hashlib.sha256(_encoded(request)).hexdigest()
+        if media_binding is not None and not _valid_media_binding(media_binding):
+            raise ValueError("Invalid media receipt binding")
         token = self._request_token(conversation_id, client_request_id)
         base = {
             "conversation_id": conversation_id,
@@ -365,6 +406,42 @@ class CorrelatedSendManager:
                         {"status": "failed", "error_code": "request_conflict"},
                         replayed=False,
                     )
+                if media_binding is not None and "media" in existing:
+                    # Remember a bounded set of identical-content restagings.
+                    # Alias persistence precedes returning its replay receipt.
+                    token_alias = media_binding["upload_tokens"][0]
+                    aliases = existing["media"]["upload_tokens"]
+                    if token_alias not in aliases:
+                        if len(aliases) >= 8:
+                            return self._response(
+                                base,
+                                {"status": "failed", "error_code": "busy"},
+                                replayed=False,
+                            )
+                        aliases.append(token_alias)
+                        if not self._fits():
+                            aliases.remove(token_alias)
+                            return self._response(
+                                base,
+                                {
+                                    "status": "failed",
+                                    "error_code": "persistence_unavailable",
+                                },
+                                replayed=False,
+                            )
+                        try:
+                            await self._store.async_save(self._snapshot())
+                        except Exception:
+                            aliases.remove(token_alias)
+                            self.persistence_available = False
+                            return self._response(
+                                base,
+                                {
+                                    "status": "failed",
+                                    "error_code": "persistence_unavailable",
+                                },
+                                replayed=False,
+                            )
                 return self._response(base, existing, replayed=True)
             if self._stopping:
                 return self._response(
@@ -385,6 +462,8 @@ class CorrelatedSendManager:
                 "message_id": None,
                 "error_code": None,
             }
+            if media_binding is not None:
+                record["media"] = deepcopy(dict(media_binding))
             self._records[token] = record
             if not self._fits():
                 del self._records[token]
@@ -566,7 +645,18 @@ class CorrelatedSendManager:
                 or not _DIGEST.fullmatch(token)
                 or not isinstance(record, dict)
                 or set(record)
-                != {"digest", "created_at", "status", "message_id", "error_code"}
+                not in (
+                    {"digest", "created_at", "status", "message_id", "error_code"},
+                    {
+                        "digest",
+                        "created_at",
+                        "status",
+                        "message_id",
+                        "error_code",
+                        "media",
+                    },
+                )
+                or ("media" in record and not _valid_media_binding(record["media"]))
                 or not isinstance(record["digest"], str)
                 or not _DIGEST.fullmatch(record["digest"])
                 or not isinstance(record["created_at"], (int, float))
@@ -578,3 +668,41 @@ class CorrelatedSendManager:
             ):
                 raise ValueError("Invalid idempotency record")
         self._records = deepcopy(records)
+
+
+def _valid_media_binding(value: object) -> bool:
+    """Validate bounded, content-free extension while reading old v1 ledgers."""
+    if not isinstance(value, Mapping) or set(value) != {
+        "upload_tokens",
+        "principal_token",
+        "sha256",
+        "size_bytes",
+        "kind",
+        "mime_type",
+        "native_opus",
+        "file_name_digest",
+        "route_binding_digest",
+    }:
+        return False
+    tokens = value["upload_tokens"]
+    return (
+        isinstance(tokens, list)
+        and 1 <= len(tokens) <= 8
+        and all(isinstance(item, str) and _DIGEST.fullmatch(item) for item in tokens)
+        and len(set(tokens)) == len(tokens)
+        and all(
+            isinstance(value[field], str) and _DIGEST.fullmatch(value[field])
+            for field in (
+                "principal_token",
+                "sha256",
+                "file_name_digest",
+                "route_binding_digest",
+            )
+        )
+        and type(value["size_bytes"]) is int
+        and 0 < value["size_bytes"] <= 25 * 1024 * 1024
+        and value["kind"] in {"audio", "image", "file"}
+        and isinstance(value["mime_type"], str)
+        and 1 <= len(value["mime_type"]) <= 128
+        and type(value["native_opus"]) is bool
+    )

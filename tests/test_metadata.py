@@ -35,9 +35,11 @@ def test_service_metadata_matches_actions() -> None:
     assert set(services) == {
         "get_channel_capabilities",
         "get_group_membership",
+        "get_media",
         "list_commands",
         "register_command",
         "send_message",
+        "send_media_to_conversation",
         "send_poll",
         "send_to_conversation",
         "unregister_command",

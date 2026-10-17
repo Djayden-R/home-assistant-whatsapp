@@ -1,0 +1,576 @@
+{
+  "contract_version": 1,
+  "synthetic_only": true,
+  "not_live_whatsapp_e2e": true,
+  "binary_fixtures": {
+    "voice_note": "media-fixtures/synthetic-voice-note.ogg",
+    "ordinary_audio": "media-fixtures/synthetic-audio-file.mp3",
+    "image": "media-fixtures/synthetic-image.png",
+    "document": "media-fixtures/synthetic-document.pdf",
+    "hashes": "media-fixtures/SHA256SUMS"
+  },
+  "capabilities": {
+    "enabled": {
+      "media_retrieval": true,
+      "media_send": true,
+      "media_contract": {
+        "version": 1,
+        "inbound_kinds": ["audio", "image", "file"],
+        "outbound_kinds": ["audio", "image", "file"],
+        "voice_note_detection": true,
+        "voice_note_send": true,
+        "max_download_bytes": 26214400,
+        "max_upload_bytes": 26214400,
+        "cache_max_bytes": 268435456,
+        "cache_max_files": 128,
+        "cache_retention_seconds": 3600,
+        "reference_retention_seconds": 3600,
+        "reference_max_items": 2048,
+        "mime_types": [
+          "audio/ogg",
+          "audio/mpeg",
+          "audio/mp4",
+          "audio/wav",
+          "audio/flac",
+          "image/jpeg",
+          "image/png",
+          "image/gif",
+          "image/webp",
+          "application/pdf"
+        ],
+        "caption_max_length": 1024,
+        "caption_kinds": ["image", "file", "audio"],
+        "voice_note_captions": false,
+        "voice_note_mime_type": "audio/ogg; codecs=opus",
+        "voice_note_conversion": false,
+        "voice_note_channels": [1, 2],
+        "backend_fetch_concurrency_per_entry": 1,
+        "upload_concurrency_per_entry": 1,
+        "transfer_queue_per_entry": 4,
+        "send_concurrency_global": 1,
+        "send_queue_global": 4,
+        "connection_timeout_seconds": 10,
+        "transfer_timeout_seconds": 60
+      }
+    },
+    "disabled": {
+      "media_retrieval": false,
+      "media_send": false,
+      "media_contract": {
+        "version": 1,
+        "inbound_kinds": [],
+        "outbound_kinds": [],
+        "voice_note_detection": false,
+        "voice_note_send": false,
+        "max_download_bytes": 26214400,
+        "max_upload_bytes": 26214400,
+        "cache_max_bytes": 268435456,
+        "cache_max_files": 128,
+        "cache_retention_seconds": 3600,
+        "reference_retention_seconds": 3600,
+        "reference_max_items": 2048,
+        "mime_types": [
+          "audio/ogg",
+          "audio/mpeg",
+          "audio/mp4",
+          "audio/wav",
+          "audio/flac",
+          "image/jpeg",
+          "image/png",
+          "image/gif",
+          "image/webp",
+          "application/pdf"
+        ],
+        "caption_max_length": 1024,
+        "caption_kinds": [],
+        "voice_note_captions": false,
+        "voice_note_mime_type": "audio/ogg; codecs=opus",
+        "voice_note_conversion": false,
+        "voice_note_channels": [1, 2],
+        "backend_fetch_concurrency_per_entry": 1,
+        "upload_concurrency_per_entry": 1,
+        "transfer_queue_per_entry": 4,
+        "send_concurrency_global": 1,
+        "send_queue_global": 4,
+        "connection_timeout_seconds": 10,
+        "transfer_timeout_seconds": 60
+      }
+    }
+  },
+  "incoming_events": {
+    "voice_note": {
+      "raw_gows_media_type": "ptt",
+      "event": {
+        "schema_version": 1,
+        "event_id": "evt_voice_fixture",
+        "type": "message.received",
+        "config_entry_id": "entry_fixture",
+        "conversation_id": "conv_fixture_direct",
+        "conversation_type": "direct",
+        "occurred_at": "2026-10-17T10:00:00+00:00",
+        "sender": {
+          "contact_id": "contact_fixture",
+          "notify_entity_id": "notify.whatsapp_fixture"
+        },
+        "message": {
+          "id": "msg_voice_fixture",
+          "kind": "audio",
+          "in_reply_to": null,
+          "attachments": [
+            {
+              "attachment_id": "att_0123456789abcdef0123456789abcdef",
+              "kind": "audio",
+              "mime_type": "audio/ogg",
+              "file_name": "synthetic-voice-note.ogg",
+              "size_bytes": 474,
+              "voice_note": true,
+              "duration_ms": null,
+              "retrievable": true
+            }
+          ]
+        }
+      }
+    },
+    "ordinary_audio": {
+      "raw_gows_media_type": "audio",
+      "event": {
+        "schema_version": 1,
+        "event_id": "evt_audio_fixture",
+        "type": "message.received",
+        "config_entry_id": "entry_fixture",
+        "conversation_id": "conv_fixture_direct",
+        "conversation_type": "direct",
+        "occurred_at": "2026-10-17T10:00:01+00:00",
+        "sender": {
+          "contact_id": "contact_fixture",
+          "notify_entity_id": "notify.whatsapp_fixture"
+        },
+        "message": {
+          "id": "msg_audio_fixture",
+          "kind": "audio",
+          "in_reply_to": null,
+          "attachments": [
+            {
+              "attachment_id": "att_1123456789abcdef0123456789abcdef",
+              "kind": "audio",
+              "mime_type": "audio/mpeg",
+              "file_name": "synthetic-audio-file.mp3",
+              "size_bytes": 729,
+              "voice_note": false,
+              "duration_ms": null,
+              "retrievable": true
+            }
+          ]
+        }
+      }
+    },
+    "image": {
+      "event": {
+        "schema_version": 1,
+        "event_id": "evt_image_fixture",
+        "type": "message.received",
+        "config_entry_id": "entry_fixture",
+        "conversation_id": "conv_fixture_group",
+        "conversation_type": "group",
+        "occurred_at": "2026-10-17T10:00:02+00:00",
+        "group": {
+          "purpose": "general",
+          "contact_id": "group_contact_fixture"
+        },
+        "sender": {
+          "participant_id": "participant_fixture",
+          "identity_status": "verified"
+        },
+        "message": {
+          "id": "msg_image_fixture",
+          "kind": "image",
+          "in_reply_to": null,
+          "attachments": [
+            {
+              "attachment_id": "att_2123456789abcdef0123456789abcdef",
+              "kind": "image",
+              "mime_type": "image/png",
+              "file_name": "synthetic-image.png",
+              "size_bytes": 70,
+              "voice_note": null,
+              "duration_ms": null,
+              "retrievable": true
+            }
+          ]
+        }
+      },
+      "raw_gows_media_type": "image"
+    },
+    "document": {
+      "event": {
+        "schema_version": 1,
+        "event_id": "evt_document_fixture",
+        "type": "message.received",
+        "config_entry_id": "entry_fixture",
+        "conversation_id": "conv_fixture_direct",
+        "conversation_type": "direct",
+        "occurred_at": "2026-10-17T10:00:03+00:00",
+        "sender": {
+          "contact_id": "contact_fixture",
+          "notify_entity_id": "notify.whatsapp_fixture"
+        },
+        "message": {
+          "id": "msg_document_fixture",
+          "kind": "file",
+          "in_reply_to": null,
+          "attachments": [
+            {
+              "attachment_id": "att_3123456789abcdef0123456789abcdef",
+              "kind": "file",
+              "mime_type": "application/pdf",
+              "file_name": "synthetic-document.pdf",
+              "size_bytes": 594,
+              "voice_note": null,
+              "duration_ms": null,
+              "retrievable": true
+            }
+          ]
+        }
+      },
+      "raw_gows_media_type": "document"
+    },
+    "unknown_media": {
+      "description": "Missing media facts remain null. A later get_media call checks the exact bytes and may reject them.",
+      "event": {
+        "schema_version": 1,
+        "event_id": "evt_unknown_fixture",
+        "type": "message.received",
+        "config_entry_id": "entry_fixture",
+        "conversation_id": "conv_fixture_direct",
+        "conversation_type": "direct",
+        "occurred_at": "2026-10-17T10:00:04+00:00",
+        "sender": {
+          "contact_id": "contact_fixture",
+          "notify_entity_id": "notify.whatsapp_fixture"
+        },
+        "message": {
+          "id": "msg_unknown_fixture",
+          "kind": "unknown",
+          "in_reply_to": null,
+          "attachments": [
+            {
+              "attachment_id": "att_4123456789abcdef0123456789abcdef",
+              "kind": "unknown",
+              "mime_type": null,
+              "file_name": null,
+              "size_bytes": null,
+              "voice_note": null,
+              "duration_ms": null,
+              "retrievable": true
+            }
+          ]
+        }
+      },
+      "raw_gows_media_type": "unknown"
+    },
+    "group_voice_note": {
+      "raw_gows_media_type": "ptt",
+      "event": {
+        "schema_version": 1,
+        "event_id": "evt_group_voice_fixture",
+        "type": "message.received",
+        "config_entry_id": "entry_fixture",
+        "conversation_id": "conv_fixture_general_group",
+        "conversation_type": "group",
+        "occurred_at": "2026-10-17T10:00:05+00:00",
+        "group": {
+          "purpose": "general",
+          "contact_id": "group_contact_fixture"
+        },
+        "sender": {
+          "participant_id": "participant_group_sender_fixture",
+          "identity_status": "verified"
+        },
+        "message": {
+          "id": "msg_group_voice_fixture",
+          "kind": "audio",
+          "in_reply_to": "msg_group_quote_fixture",
+          "attachments": [
+            {
+              "attachment_id": "att_5123456789abcdef0123456789abcdef",
+              "kind": "audio",
+              "mime_type": "audio/ogg",
+              "file_name": "synthetic-voice-note.ogg",
+              "size_bytes": 474,
+              "voice_note": true,
+              "duration_ms": null,
+              "retrievable": true
+            }
+          ],
+          "mentions": {
+            "available": true,
+            "bot": false,
+            "participant_ids": [
+              "participant_group_mentioned_fixture"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "get_media": {
+    "request": {
+      "config_entry_id": "entry_fixture",
+      "conversation_id": "conv_fixture_direct",
+      "message_id": "msg_voice_fixture",
+      "attachment_id": "att_0123456789abcdef0123456789abcdef",
+      "max_bytes": 26214400
+    },
+    "ready": {
+      "status": "ready",
+      "config_entry_id": "entry_fixture",
+      "conversation_id": "conv_fixture_direct",
+      "message_id": "msg_voice_fixture",
+      "attachment": {
+        "kind": "audio",
+        "mime_type": "audio/ogg",
+        "file_name": "synthetic-voice-note.ogg",
+        "size_bytes": 474,
+        "voice_note": true,
+        "duration_ms": null,
+        "attachment_id": "att_0123456789abcdef0123456789abcdef",
+        "sha256": "8fd9bce92ee559e1213f64fc9111f6093a7ad19cb3cb4723dec8bdd00db86e25"
+      },
+      "download": {
+        "method": "GET",
+        "path": "/api/waha_whatsapp/entry_fixture/conversations/conv_fixture_direct/media/att_0123456789abcdef0123456789abcdef",
+        "requires_ha_auth": true,
+        "expires_at": "2026-10-17T11:00:00+00:00"
+      }
+    },
+    "expired": {
+      "status": "failed",
+      "error": {
+        "code": "media_expired",
+        "retryable": false
+      }
+    },
+    "disabled": {
+      "status": "failed",
+      "error": {
+        "code": "media_disabled",
+        "retryable": false
+      }
+    },
+    "unsupported_media": {
+      "status": "failed",
+      "error": {
+        "code": "unsupported_media_type",
+        "retryable": false
+      }
+    }
+  },
+  "upload": {
+    "request": {
+      "method": "POST",
+      "path": "/api/waha_whatsapp/entry_fixture/conversations/conv_fixture_direct/media",
+      "requires_ha_admin": true,
+      "content_type": "multipart/form-data",
+      "part_name": "file",
+      "fixture_file": "media-fixtures/synthetic-document.pdf",
+      "part_content_type": "application/pdf"
+    },
+    "ready": {
+      "status": "ready",
+      "config_entry_id": "entry_fixture",
+      "conversation_id": "conv_fixture_direct",
+      "upload_id": "upload_0123456789abcdef0123456789abcdef",
+      "kind": "file",
+      "mime_type": "application/pdf",
+      "file_name": "synthetic-document.pdf",
+      "size_bytes": 594,
+      "sha256": "2ec31e8371e065d332aaad170a5189b32c15ba246fb04b7bbc09ff22d5f4b245",
+      "expires_at": "2026-10-17T11:00:00+00:00"
+    },
+    "oversize": {
+      "status": "failed",
+      "error": {
+        "code": "media_too_large",
+        "retryable": false
+      }
+    },
+    "unsupported": {
+      "status": "failed",
+      "error": {
+        "code": "unsupported_media_type",
+        "retryable": false
+      }
+    },
+    "disabled": {
+      "status": "failed",
+      "error": {
+        "code": "media_disabled",
+        "retryable": false
+      }
+    }
+  },
+  "send_media_to_conversation": {
+    "request": {
+      "config_entry_id": "entry_fixture",
+      "conversation_id": "conv_fixture_direct",
+      "upload_id": "upload_0123456789abcdef0123456789abcdef",
+      "kind": "file",
+      "as_voice_note": false,
+      "client_request_id": "consumer-request-0001",
+      "caption": "Synthetic fixture attachment",
+      "reply_to_message_id": "msg_voice_fixture",
+      "origin": "application",
+      "content_redacted": false
+    },
+    "accepted": {
+      "conversation_id": "conv_fixture_direct",
+      "client_request_id": "consumer-request-0001",
+      "status": "accepted",
+      "message_id": "msg_sent_fixture",
+      "replayed": false
+    },
+    "replayed": {
+      "conversation_id": "conv_fixture_direct",
+      "client_request_id": "consumer-request-0001",
+      "status": "accepted",
+      "message_id": "msg_sent_fixture",
+      "replayed": true
+    },
+    "pending": {
+      "conversation_id": "conv_fixture_direct",
+      "client_request_id": "consumer-request-pending",
+      "status": "pending",
+      "message_id": null,
+      "replayed": true
+    },
+    "conflict": {
+      "conversation_id": "conv_fixture_direct",
+      "client_request_id": "consumer-request-0001",
+      "status": "failed",
+      "message_id": null,
+      "error_code": "request_conflict",
+      "replayed": false
+    },
+    "expired_upload": {
+      "conversation_id": "conv_fixture_direct",
+      "client_request_id": "consumer-request-expired",
+      "status": "failed",
+      "message_id": null,
+      "error_code": "media_expired",
+      "replayed": false
+    },
+    "unsupported_voice": {
+      "conversation_id": "conv_fixture_direct",
+      "client_request_id": "consumer-request-not-opus",
+      "status": "failed",
+      "message_id": null,
+      "error_code": "unsupported",
+      "replayed": false
+    },
+    "unknown_outcome": {
+      "conversation_id": "conv_fixture_direct",
+      "client_request_id": "consumer-request-uncertain",
+      "status": "unknown",
+      "message_id": null,
+      "error_code": "outcome_unknown",
+      "replayed": false
+    },
+    "disabled": {
+      "conversation_id": "conv_fixture_direct",
+      "client_request_id": "consumer-request-disabled",
+      "status": "failed",
+      "message_id": null,
+      "error_code": "media_disabled",
+      "replayed": false
+    },
+    "examples": {
+      "image": {
+        "request": {
+          "config_entry_id": "entry_fixture",
+          "conversation_id": "conv_fixture_direct",
+          "upload_id": "upload_image_fixture",
+          "kind": "image",
+          "as_voice_note": false,
+          "client_request_id": "consumer-image-0001",
+          "caption": "Synthetic image",
+          "origin": "application",
+          "content_redacted": false
+        },
+        "accepted": {
+          "conversation_id": "conv_fixture_direct",
+          "client_request_id": "consumer-image-0001",
+          "status": "accepted",
+          "message_id": "msg_image_sent_fixture",
+          "replayed": false
+        },
+        "staging_fixture_file": "media-fixtures/synthetic-image.png"
+      },
+      "ordinary_audio": {
+        "request": {
+          "config_entry_id": "entry_fixture",
+          "conversation_id": "conv_fixture_direct",
+          "upload_id": "upload_audio_fixture",
+          "kind": "audio",
+          "as_voice_note": false,
+          "client_request_id": "consumer-audio-0001",
+          "origin": "application"
+        },
+        "accepted": {
+          "conversation_id": "conv_fixture_direct",
+          "client_request_id": "consumer-audio-0001",
+          "status": "accepted",
+          "message_id": "msg_audio_sent_fixture",
+          "replayed": false
+        },
+        "staging_fixture_file": "media-fixtures/synthetic-audio-file.mp3"
+      },
+      "native_voice_note": {
+        "request": {
+          "config_entry_id": "entry_fixture",
+          "conversation_id": "conv_fixture_direct",
+          "upload_id": "upload_voice_fixture",
+          "kind": "audio",
+          "as_voice_note": true,
+          "client_request_id": "consumer-voice-0001",
+          "origin": "application"
+        },
+        "accepted": {
+          "conversation_id": "conv_fixture_direct",
+          "client_request_id": "consumer-voice-0001",
+          "status": "accepted",
+          "message_id": "msg_voice_sent_fixture",
+          "replayed": false
+        },
+        "staging_fixture_file": "media-fixtures/synthetic-voice-note.ogg"
+      },
+      "document": "media-fixtures/synthetic-document.pdf"
+    }
+  },
+  "http_errors": {
+    "missing_ha_authentication": {
+      "status_code": 401,
+      "description": "HA authenticated-view middleware rejects the request before the media route."
+    },
+    "non_admin": {
+      "status_code": 403,
+      "body": {
+        "status": "failed",
+        "error": {
+          "code": "not_authorized",
+          "retryable": false
+        }
+      }
+    },
+    "busy": {
+      "status_code": 429,
+      "retry_after_seconds": 5,
+      "body": {
+        "status": "failed",
+        "error": {
+          "code": "busy",
+          "retryable": true
+        }
+      }
+    }
+  }
+}

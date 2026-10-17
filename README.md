@@ -63,6 +63,16 @@ observation and general groups are disabled by default. The integration remains
 a communication layer: external consumers decide what messages mean and what
 work is authorized.
 
+Integration 1.8.0 adds opt-in authenticated media transport: incoming voice,
+audio, image and PDF descriptors, on-demand downloads, private upload staging,
+and durable correlated image/document/audio sends. See the [media API and
+consumer fixtures](docs/MEDIA_API.md) and [live checklist](docs/MEDIA_HA_TEST.md).
+Media is off by default and requires an active HA administrator credential.
+App 0.2.4 prepares the matching private media URL origin and keeps the existing
+digest-pinned GOWS 2026.9.1 engine. Keep `download_media: false` for per-message
+retrieval. Transcription and
+speech generation belong to external consumers.
+
 ## Requirements
 
 - Home Assistant 2026.7 or newer.
@@ -405,7 +415,9 @@ data:
 The event also includes `config_entry_id`, `occurred_at`, and an opaque
 `sender.contact_id`; `message.in_reply_to` is present when WAHA supplies a
 quoted-message ID. For audio, image, or file messages, `kind` identifies the
-type but media is not downloaded and no media URL is exposed. Reactions use
+type; additive attachment descriptors distinguish verified voice notes from
+ordinary audio. Media is retrieved only through the authenticated
+[media API](docs/MEDIA_API.md), and no backend URL is exposed. Reactions use
 `type: reaction.added` or `reaction.removed`, with a `reaction` object that
 contains an emoji and opaque target message ID. Reactions do not trigger
 actions automatically. Listen for the event under **Developer tools → Events**
@@ -497,7 +509,7 @@ branch. Existing `v0.1.0` and `v0.2.0` release tags are unchanged.
 
 - Never expose WAHA port 3000 to the internet.
 - Keep the sidebar restricted to Home Assistant administrators.
-- Keep media downloads disabled until media support is needed.
+- Keep automatic WAHA media downloads disabled when using on-demand retrieval.
 - Enable WhatsApp two-step verification and configure a recovery email.
 - Keep the dedicated SIM/eSIM recoverable in a normal phone.
 - API keys and phone numbers are redacted from downloaded diagnostics.

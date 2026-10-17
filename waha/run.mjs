@@ -4,6 +4,24 @@ import { pathToFileURL } from "node:url";
 
 import { registerDiscoveryWithRetry } from "./discovery.mjs";
 
+const DNS_LABEL = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+
+function mediaBaseUrl(hostname) {
+  if (hostname == null || hostname === "") return "http://127.0.0.1:3000";
+  if (typeof hostname !== "string") {
+    throw new Error("HOSTNAME must be a valid internal DNS hostname");
+  }
+  const host = hostname.replaceAll("_", "-");
+  const labels = host.split(".");
+  if (
+    host.length > 253 ||
+    labels.some((label) => label.length > 63 || !DNS_LABEL.test(label))
+  ) {
+    throw new Error("HOSTNAME must be a valid internal DNS hostname");
+  }
+  return `http://${host}:3000`;
+}
+
 export function buildEnvironment(options, inherited = {}) {
   const apiKey = String(options.api_key || "");
   const sessionName = String(options.session_name || "default");
@@ -40,6 +58,10 @@ export function buildEnvironment(options, inherited = {}) {
     WHATSAPP_DEFAULT_ENGINE: "GOWS",
     WHATSAPP_API_HOSTNAME: "0.0.0.0",
     WHATSAPP_API_PORT: "3000",
+    // WAHA uses this public-facing base to generate media.url. Its listener
+    // host is 0.0.0.0 and must never leak into media retrieval URLs. Match the
+    // private DNS hostname published through Supervisor discovery instead.
+    WAHA_BASE_URL: mediaBaseUrl(inherited.HOSTNAME),
     WAHA_LOCAL_STORE_BASE_DIR: "/data/sessions",
     WAHA_NAMESPACE: "all",
     WHATSAPP_FILES_FOLDER: "/data/media",

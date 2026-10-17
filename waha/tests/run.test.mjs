@@ -47,12 +47,13 @@ function fixture({ options = { api_key: apiKey }, env = {}, discoveryError, read
 }
 
 test("environment preserves persistent GOWS storage and disables media by default", () => {
-  const env = buildEnvironment({ api_key: apiKey }, { WAHA_EVENTS_DOWNLOAD_MEDIA: "true", WAHA_API_DOWNLOAD_MEDIA: "true", HOSTNAME: "ha-waha" });
-  assert.equal(env.HOSTNAME, "ha-waha");
+  const env = buildEnvironment({ api_key: apiKey }, { WAHA_EVENTS_DOWNLOAD_MEDIA: "true", WAHA_API_DOWNLOAD_MEDIA: "true", WAHA_BASE_URL: "https://untrusted.example/path", HOSTNAME: "addon_abc_ha_waha" });
+  assert.equal(env.HOSTNAME, "addon_abc_ha_waha");
   assert.equal(env.WHATSAPP_DEFAULT_ENGINE, "GOWS");
   assert.equal(env.WAHA_LOCAL_STORE_BASE_DIR, "/data/sessions");
   assert.equal(env.WAHA_NAMESPACE, "all");
   assert.equal(env.WHATSAPP_FILES_FOLDER, "/data/media");
+  assert.equal(env.WAHA_BASE_URL, "http://addon-abc-ha-waha:3000");
   for (const key of ["WHATSAPP_DOWNLOAD_MEDIA", "WAHA_EVENTS_DOWNLOAD_MEDIA", "WAHA_API_DOWNLOAD_MEDIA"]) assert.equal(env[key], "false");
   assert.equal(env.WHATSAPP_RESTART_ALL_SESSIONS, "true");
   assert.equal(env.HA_WAHA_SESSION_NAME, "default");
@@ -78,6 +79,19 @@ test("environment supplies auth/dashboard credentials without startup fallback g
   assert.equal(env.WAHA_PRINT_QR, "false");
   assert.equal(env.WHATSAPP_API_HOSTNAME, "0.0.0.0");
   assert.equal(env.WHATSAPP_API_PORT, "3000");
+  assert.equal(env.WAHA_BASE_URL, "http://127.0.0.1:3000");
+});
+
+test("environment rejects an unsafe discovery hostname before startup writes", () => {
+  assert.throws(
+    () => buildEnvironment({ api_key: apiKey }, { HOSTNAME: "waha:3000/path" }),
+    /HOSTNAME must be a valid internal DNS hostname/,
+  );
+  const f = fixture({ env: { HOSTNAME: "waha:3000/path" } });
+  assert.deepEqual(f.exits, [1]);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.directories.length, 0);
+  assert.ok(!f.logs.join("\n").includes("waha:3000/path"));
 });
 
 test("wrapper starts the upstream entrypoint and control child with configured environment", async () => {

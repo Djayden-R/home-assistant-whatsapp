@@ -5,6 +5,32 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-17
+
+### Added
+
+- Add optional schema-v1 attachment descriptors with explicit GOWS native
+  voice-note, ordinary-audio and unknown classification, without downloading
+  during callback publication.
+- Add active-administrator-only `get_media`, authenticated bounded binary
+  download and multipart staging routes, shared private cache limits, exact
+  conversation/message bindings, fresh authorization, and immutable expiry.
+- Add `send_media_to_conversation` for staged images, PDFs and audio, including
+  native Ogg/Opus voice transport. Reuse the durable text-send ledger for
+  correlation, conflicts, restart uncertainty and replay after byte expiry.
+- Publish effective media capabilities, safe errors, synthetic consumer
+  fixtures and a separate manual activation checklist.
+
+### Compatibility
+
+- Media transport defaults off. Supported media requires GOWS 2026.9.1 or newer
+  and a matching private `WAHA_BASE_URL`; app 0.2.4 prepares that origin fix
+  while preserving the existing digest-pinned engine. Keep automatic event
+  and API downloads disabled; explicit per-message requests override defaults.
+- Existing text, notify, poll, command and group/guest contracts remain.
+  Speech processing and consumer policies are outside this integration.
+- Source and mock checks are not live Home Assistant/WhatsApp verification.
+
 ## [1.7.0] - 2026-10-15
 
 ### Added

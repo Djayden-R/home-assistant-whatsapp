@@ -36,3 +36,12 @@ runtime image changes; documentation-only edits do not require a bump.
 
 The release workflow verifies each tag against the appropriate version file
 before creating the GitHub release.
+
+## Media transport 1.8.0 preparation
+
+The source prepares integration 1.8.0 and app 0.2.4. The app advertises its
+matching private media origin; the digest-pinned GOWS 2026.9.1 engine is unchanged.
+Source validation and synthetic fixtures do not
+establish a live WhatsApp test. Review [media requirements](docs/MEDIA_API.md)
+and complete the [activation checklist](docs/MEDIA_HA_TEST.md) separately.
+Do not publish a release tag or deploy merely because source checks passed.
