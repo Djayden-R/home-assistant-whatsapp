@@ -17,6 +17,11 @@ All notable changes are documented here. This project follows
   native voice. Clients cannot select the inbound compatibility policy.
 - Add CRC-correct synthetic EOF regressions and scoped retrieval/download
   verification. This is transport compatibility, without audio repair or STT.
+- Fence new upload-alias writes from stopped or unavailable send-ledger owners
+  so a delayed media replay cannot overwrite newer receipts after reload.
+- Initialize shared private media storage independently of transport enablement.
+  Removing a disabled connection preserves other connections' state, and cache
+  expiry cleanup remains active after restarting with media disabled.
 
 The HAOS app remains at 0.2.4 with the same pinned GOWS engine and disabled
 automatic download defaults. Live HA/WhatsApp verification remains required.

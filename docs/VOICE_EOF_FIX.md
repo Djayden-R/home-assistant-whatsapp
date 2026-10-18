@@ -30,6 +30,28 @@ last page's EOS flag and recomputing that page's CRC. It is 474 bytes, SHA-256
 It contains no household recording, transcript or identifier. Its original
 EOS counterpart and checksums are in the same fixture directory.
 
+## Broader release review
+
+Fresh independent **gpt-6-astra at high reasoning** reviews covered the
+channel, groups and correlated sends in PR #3, media transport in PR #4,
+and the voice-note fix in PR #5. They found two actionable issues:
+
+- A delayed restaging replay could let a retired ledger overwrite newer send
+  receipts. New alias writes now require the current, active writer and
+  available persistence. Existing exact receipt replays remain read-only.
+  A paused-preflight/replacement/second-restart regression verifies that both
+  receipts survive and no duplicate backend submission occurs.
+- Restarting with all media options disabled left private-cache expiry
+  unscheduled. Storage initialization now restores cleanup independently of
+  enabling transfers. Direct manager removal also loads shared state before
+  deleting its own records; normal successful HA unload already took the
+  safe initialization path. Lifecycle tests cover multi-entry preservation,
+  actual timer expiry while disabled, and corrupt/unreadable/write-failed
+  indexes without resetting state.
+
+The fixes are commits `8e5098e` and `c9c1b60`. There were no minor findings
+to defer. The app, engine, public schemas and media defaults remain unchanged.
+
 ## Validation and update
 
 The regression suite constructs CRC-correct EOS/no-EOS and malformed streams,
@@ -41,13 +63,15 @@ FFmpeg check; there is no decoder dependency in the integration.
 
 Source validation on 2026-10-18:
 
-- Full pytest with the existing Home Assistant dependency path: **647 passed,
-  no skips**. The repository-only environment: **591 passed, 11 skipped**
+- Full pytest with the existing Home Assistant dependency path: **658 passed,
+  no skips**. The repository-only environment: **602 passed, 11 skipped**
   because those tests require Home Assistant.
 - Node tests: **20 passed**. Ruff, compilation, version checks for `v1.8.1`
   and unchanged `waha-v0.2.4`, Node syntax and whitespace checks passed.
-- Independent **Astra High** review found no actionable findings and separately
-  passed **222 media tests**.
+- After both broader-review findings were fixed, a fresh independent
+  **Astra High** follow-up found no remaining findings and separately passed
+  **189 tests** across correlated sends/storage, media core/lifecycle,
+  services and routes.
 - **FFmpeg 8.1.2** decoded generated no-EOS silence successfully; the public
   474-byte no-EOS fixture also decoded successfully. Neither check rewrote
   the transport bytes or used a household recording.

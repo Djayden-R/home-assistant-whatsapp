@@ -450,7 +450,9 @@ reads do not renew the fixed TTL. Bytes are removed at expiry, while a
 metadata tombstone may remain for one additional hour so a known stale ID
 returns `media_expired`. Afterwards it returns `media_not_found`. Startup
 restores the private index and still-valid bytes, deletes orphans and cleans
-expired content. Unload/reload cancels active retrieval; it does not make an
+expired content even when all connections have media transport disabled;
+this maintenance does not enable transfers. Unload/reload cancels active
+retrieval; it does not make an
 outbound pending send safe to retry. Removing the entry removes that entry's
 owned media state after active operations stop. Backups/storage loss can
 affect cached bytes. Consumers should copy needed content to their own

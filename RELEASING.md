@@ -49,7 +49,8 @@ Do not publish a release tag or deploy merely because source checks passed.
 ## Voice-note compatibility 1.8.1 preparation
 
 Integration 1.8.1 accepts exactly bound incoming GOWS PTT with complete
-Ogg/Opus packets/pages but no final EOS flag. App 0.2.4 and its pinned engine
+Ogg/Opus packets/pages but no final EOS flag, fences retired ledger writes,
+and restores cache expiry while media is disabled. App 0.2.4 and its pinned engine
 are unchanged, so this patch requires only an integration release tag.
 Complete the normal source validation and publication steps above; the
 [fix handoff](docs/VOICE_EOF_FIX.md) separates synthetic checks from the
