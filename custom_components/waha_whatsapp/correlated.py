@@ -412,6 +412,27 @@ class CorrelatedSendManager:
                     token_alias = media_binding["upload_tokens"][0]
                     aliases = existing["media"]["upload_tokens"]
                     if token_alias not in aliases:
+                        # A new alias is a ledger write, not a read-only replay.
+                        # A preflight may outlive stop and a writer handoff; its
+                        # stale snapshot must never replace the new owner's data.
+                        if self._stopping or self._writer_slot.owner is not self:
+                            return self._response(
+                                base,
+                                {
+                                    "status": "failed",
+                                    "error_code": "channel_unavailable",
+                                },
+                                replayed=False,
+                            )
+                        if not self.persistence_available:
+                            return self._response(
+                                base,
+                                {
+                                    "status": "failed",
+                                    "error_code": "persistence_unavailable",
+                                },
+                                replayed=False,
+                            )
                         if len(aliases) >= 8:
                             return self._response(
                                 base,

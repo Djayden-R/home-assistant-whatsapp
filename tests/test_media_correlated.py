@@ -71,8 +71,14 @@ class Staging:
         yield self.get_upload(upload_id, conversation_id, principal_id), self.path
 
 
-async def setup(tmp_path, monkeypatch, *, store=None):
-    ledger = manager(store)
+async def setup(tmp_path, monkeypatch, *, store=None, hass=None):
+    ledger = (
+        manager(store)
+        if hass is None
+        else correlated.CorrelatedSendManager(
+            hass, SimpleNamespace(entry_id="entry-a"), store=store
+        )
+    )
     await ledger.async_start()
     staging = Staging(tmp_path)
     registry = SimpleNamespace(
@@ -452,3 +458,136 @@ async def test_payload_preparation_failure_is_definite_and_never_submits(
     assert (await call(entry, route))["replayed"] is True
     backend.assert_not_awaited()
     assert events == []
+
+
+@pytest.mark.parametrize(
+    ("state", "code"),
+    [("stopped", "channel_unavailable"), ("unavailable", "persistence_unavailable")],
+)
+async def test_new_restage_alias_requires_live_writer_but_known_replay_stays_read_only(
+    tmp_path, monkeypatch, state, code
+):
+    store = FakeStore()
+    entry, staging, backend, route, events, _routes = await setup(
+        tmp_path, monkeypatch, store=store
+    )
+    accepted = await call(entry, route)
+    staging.receipts["upload-b"] = replace(staging.receipt, upload_id="upload-b")
+    ledger = entry.runtime_data.correlated_sends
+    if state == "stopped":
+        await ledger.async_stop()
+    else:
+        ledger.persistence_available = False
+    snapshot, saves = deepcopy(store.data), store.save_count
+    known = await call(entry, route)
+    assert known == {**accepted, "replayed": True}
+    restaged = await call(entry, route, data={**DATA, "upload_id": "upload-b"})
+    assert restaged["status"] == "failed"
+    assert restaged["error_code"] == code
+    assert restaged["replayed"] is False
+    conflict = await call(entry, route, data={**DATA, "caption": "Other payload"})
+    assert conflict["error_code"] == "request_conflict"
+    assert ledger._snapshot() == snapshot
+    assert store.data == snapshot
+    assert store.save_count == saves
+    assert staging.opens == len(events) == 1
+    backend.assert_awaited_once()
+
+
+async def test_old_preflight_cannot_overwrite_replacement_receipts_with_restage_alias(
+    tmp_path, monkeypatch
+):
+    hass, store = SimpleNamespace(data={}), FakeStore()
+    entry, staging, backend, route, _events, _routes = await setup(
+        tmp_path, monkeypatch, store=store, hass=hass
+    )
+    old = entry.runtime_data.correlated_sends
+    accepted = await call(entry, route)
+    staging.receipts["upload-b"] = replace(staging.receipt, upload_id="upload-b")
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def paused_preflight(conversation, transmit):
+        entered.set()
+        await release.wait()
+        return await route(conversation, transmit)
+
+    late = asyncio.create_task(
+        call(entry, paused_preflight, data={**DATA, "upload_id": "upload-b"})
+    )
+    await asyncio.wait_for(entered.wait(), 2)
+    try:
+        # The old call captured its runtime/ledger before pausing. It has not
+        # been admitted, so old.stop completes and the replacement can load.
+        await old.async_stop()
+        replacement = correlated.CorrelatedSendManager(hass, entry, store=store)
+        await replacement.async_start()
+        assert replacement.persistence_available
+        entry.runtime_data = SimpleNamespace(
+            **{**vars(entry.runtime_data), "correlated_sends": replacement}
+        )
+        newer_data = {**DATA, "client_request_id": "replacement-request"}
+        newer = await call(entry, route, data=newer_data)
+        assert newer["status"] == "accepted"
+        assert len(store.data["records"]) == 2
+        snapshot, saves = deepcopy(store.data), store.save_count
+    finally:
+        release.set()
+    late_result = await late
+    assert late_result["status"] == "failed"
+    assert late_result["error_code"] == "channel_unavailable"
+    assert store.data == snapshot
+    assert store.save_count == saves
+    assert backend.await_count == staging.opens == 2
+
+    # A second reload must retain both accepted receipts. Removing the bytes
+    # forces genuine durable replays, rather than another staged submission.
+    restarted = correlated.CorrelatedSendManager(hass, entry, store=store)
+    await restarted.async_start()
+    entry.runtime_data.correlated_sends = restarted
+    staging.receipts.clear()
+    staging.expired = True
+    staging.path.unlink()
+    assert await call(entry, route) == {**accepted, "replayed": True}
+    assert await call(entry, route, data=newer_data) == {**newer, "replayed": True}
+    assert store.data == snapshot
+    assert store.save_count == saves
+    assert backend.await_count == staging.opens == 2
+
+
+async def test_live_restage_alias_quota_and_saved_alias_replay_remain_bounded(
+    tmp_path, monkeypatch
+):
+    store = FakeStore()
+    entry, staging, backend, route, _events, _routes = await setup(
+        tmp_path, monkeypatch, store=store
+    )
+    accepted = await call(entry, route)
+    for index in range(1, 8):
+        upload_id = f"identical-restage-{index}"
+        staging.receipts[upload_id] = replace(staging.receipt, upload_id=upload_id)
+        assert await call(entry, route, data={**DATA, "upload_id": upload_id}) == {
+            **accepted,
+            "replayed": True,
+        }
+    snapshot, saves = deepcopy(store.data), store.save_count
+    staging.receipts["one-too-many"] = replace(
+        staging.receipt, upload_id="one-too-many"
+    )
+    overflow = await call(entry, route, data={**DATA, "upload_id": "one-too-many"})
+    assert overflow["error_code"] == "busy"
+    assert overflow["replayed"] is False
+    conflict = await call(
+        entry, route, data={**DATA, "upload_id": "one-too-many", "caption": "Changed"}
+    )
+    assert conflict["error_code"] == "request_conflict"
+    staging.receipts.clear()
+    await entry.runtime_data.correlated_sends.async_stop()
+    assert await call(
+        entry, route, data={**DATA, "upload_id": "identical-restage-7"}
+    ) == {**accepted, "replayed": True}
+    assert store.data == snapshot
+    assert store.save_count == saves
+    assert (
+        len(next(iter(store.data["records"].values()))["media"]["upload_tokens"]) == 8
+    )
+    backend.assert_awaited_once()

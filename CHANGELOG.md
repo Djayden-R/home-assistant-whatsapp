@@ -5,6 +5,27 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-10-18
+
+### Fixed
+
+- Accept an authenticated, exactly bound inbound GOWS PTT Ogg/Opus stream
+  ending between complete pages and packets without an EOS flag. Preserve the
+  original bytes, size and SHA-256; retain framing, CRC, sequence, header,
+  stream, authorization and resource checks.
+- Keep the default Ogg policy strict for ordinary audio, uploads and outbound
+  native voice. Clients cannot select the inbound compatibility policy.
+- Add CRC-correct synthetic EOF regressions and scoped retrieval/download
+  verification. This is transport compatibility, without audio repair or STT.
+- Fence new upload-alias writes from stopped or unavailable send-ledger owners
+  so a delayed media replay cannot overwrite newer receipts after reload.
+- Initialize shared private media storage independently of transport enablement.
+  Removing a disabled connection preserves other connections' state, and cache
+  expiry cleanup remains active after restarting with media disabled.
+
+The HAOS app remains at 0.2.4 with the same pinned GOWS engine and disabled
+automatic download defaults. Live HA/WhatsApp verification remains required.
+
 ## [1.8.0] - 2026-10-17
 
 ### Added

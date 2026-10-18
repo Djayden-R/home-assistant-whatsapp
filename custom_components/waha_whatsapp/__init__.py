@@ -425,19 +425,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
     outbound_observer = OutboundObserver(hass, entry, channel_registry)
     correlated_sends = CorrelatedSendManager(hass, entry)
     await correlated_sends.async_start()
-    media_manager = MediaManager(
-        hass,
-        entry,
-        client,
-        authorize=partial(async_authorize_media, entry),
-        backend_ready=partial(async_media_backend_ready, entry),
-        observe_binding=partial(media_observation_binding, entry),
-    )
-    if entry.options.get("media_enabled") is True:
-        try:
-            await media_manager.async_start()
-        except MediaError:
-            _LOGGER.warning("WAHA media storage unavailable; media disabled")
+    media_manager = await _async_setup_media_manager(hass, entry, client)
     general_group_inbound = WahaGeneralGroupInboundManager(
         hass, entry, general_groups, channel_registry, media_manager=media_manager
     )
@@ -600,6 +588,27 @@ async def _async_reload_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> No
     await hass.config_entries.async_reload(entry.entry_id)
 
 
+async def _async_setup_media_manager(
+    hass: HomeAssistant, entry: WahaConfigEntry, client: WahaClient
+) -> MediaManager:
+    """Restore shared media expiry even when this entry disables transport."""
+    manager = MediaManager(
+        hass,
+        entry,
+        client,
+        authorize=partial(async_authorize_media, entry),
+        backend_ready=partial(async_media_backend_ready, entry),
+        observe_binding=partial(media_observation_binding, entry),
+    )
+    try:
+        await manager.async_initialize_storage()
+        if entry.options.get("media_enabled") is True:
+            await manager.async_start()
+    except MediaError:
+        _LOGGER.warning("WAHA media storage unavailable; media disabled")
+    return manager
+
+
 async def async_remove_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> None:
     """Remove this entry's private media without touching backend/session data."""
     manager = getattr(getattr(entry, "runtime_data", None), "media_manager", None)
@@ -612,7 +621,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> Non
             backend_ready=partial(async_media_backend_ready, entry),
             observe_binding=partial(media_observation_binding, entry),
         )
-        await manager.async_start()
     await manager.async_remove_entry()
 
 

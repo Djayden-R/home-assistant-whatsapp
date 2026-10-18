@@ -7,7 +7,8 @@
     "ordinary_audio": "media-fixtures/synthetic-audio-file.mp3",
     "image": "media-fixtures/synthetic-image.png",
     "document": "media-fixtures/synthetic-document.pdf",
-    "hashes": "media-fixtures/SHA256SUMS"
+    "hashes": "media-fixtures/SHA256SUMS",
+    "inbound_voice_note_no_eos": "media-fixtures/synthetic-voice-note-no-eos.ogg"
   },
   "capabilities": {
     "enabled": {
