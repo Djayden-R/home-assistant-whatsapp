@@ -672,15 +672,19 @@ class MediaManager:
             "waiting": dict(self._waiting),
         }
 
-    async def async_start(self) -> None:
+    async def async_initialize_storage(self) -> None:
+        """Restore shared private storage and expiry without enabling transfers."""
         async with self.store.lock:
             if not self.store.started:
                 try:
                     await _io(self.hass, self.store._load)
                 except (OSError, ValueError, KeyError, TypeError) as err:
                     raise MediaError("storage_unavailable", http_status=503) from err
-                self.store.started = True
                 await self.store.persist()
+                self.store.started = True
+
+    async def async_start(self) -> None:
+        await self.async_initialize_storage()
         self.enabled = True
 
     async def async_stop(self) -> None:
@@ -697,6 +701,7 @@ class MediaManager:
 
     async def _remove_entry_state(self) -> None:
         await self.async_stop()
+        await self.async_initialize_storage()
         async with self.store.lock:
             for identifier, record in list(self.store.records.items()):
                 if record["entry_id"] != self.entry.entry_id:
