@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
@@ -154,6 +155,44 @@ def media_metadata(payload: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+class _OggValidationPolicy(Enum):
+    """Internal transport context; clients cannot select a validation policy."""
+
+    STRICT = auto()
+    INBOUND_PTT_COMPLETE_EOF = auto()
+
+
+def _native_opus_header(packet: bytes) -> bool:
+    return (
+        len(packet) == 19
+        and packet[:8] == b"OpusHead"
+        and packet[8] == 1
+        and packet[9] in (1, 2)
+        and packet[18] == 0
+    )
+
+
+def _complete_opus_tags(packet: bytes) -> bool:
+    """Check complete bounded vendor/comment lengths, allowing RFC padding."""
+    if len(packet) < 16 or not packet.startswith(b"OpusTags"):
+        return False
+    offset = 12 + int.from_bytes(packet[8:12], "little")
+    if offset + 4 > len(packet):
+        return False
+    count = int.from_bytes(packet[offset : offset + 4], "little")
+    offset += 4
+    if count > (len(packet) - offset) // 4:
+        return False
+    for _ in range(count):
+        if offset + 4 > len(packet):
+            return False
+        length = int.from_bytes(packet[offset : offset + 4], "little")
+        offset += 4 + length
+        if offset > len(packet):
+            return False
+    return True
+
+
 def sniff_media(head: bytes) -> tuple[str, str, bool]:
     """Establish supported containers from bytes; declarations are not proof."""
     if head.startswith(b"OggS"):
@@ -173,14 +212,7 @@ def sniff_media(head: bytes) -> tuple[str, str, bool]:
         packet = head[27 + count : 27 + count + packet_length]
         if len(packet) != packet_length:
             raise MediaError("invalid_media")
-        opus = (
-            len(packet) >= 19
-            and packet[:8] == b"OpusHead"
-            and packet[8] == 1
-            and packet[9] in (1, 2)
-            and packet[18] == 0
-            and len(packet) == 19
-        )
+        opus = _native_opus_header(packet)
         if packet.startswith(b"OpusHead") and not opus:
             raise MediaError("invalid_media")
         if not opus and not packet.startswith(b"\x01vorbis"):
@@ -234,11 +266,17 @@ def _ogg_crc(data: bytes) -> int:
     return value
 
 
-def _validate_ogg(path: Path, native_opus: bool) -> None:
+def _validate_ogg(
+    path: Path,
+    native_opus: bool,
+    policy: _OggValidationPolicy = _OggValidationPolicy.STRICT,
+) -> None:
     """Validate bounded Ogg page framing and checksums, without decoding audio.
 
     Native voice v1 supports one mono/stereo Opus stream (mapping family zero).
     Packet data remains untrusted: this is transport validation, not sanitizing.
+    Only verified inbound PTT may omit EOS at a clean complete-packet/page EOF
+    (RFC 7845 section 3). Uploads/outbound staging always keep the strict default.
     """
     sequence, serial, packets = 0, None, 0
     partial = bytearray()
@@ -276,17 +314,31 @@ def _validate_ogg(path: Path, native_opus: bool) -> None:
                 if len(partial) > CHUNK_BYTES:
                     raise MediaError("invalid_media")
                 if length < 255:
-                    if (
-                        native_opus
-                        and packets == 1
-                        and not partial.startswith(b"OpusTags")
+                    if native_opus and (
+                        packets == 0
+                        and not _native_opus_header(partial)
+                        or packets == 1
+                        and not _complete_opus_tags(partial)
+                        or packets >= 2
+                        and (
+                            not partial
+                            or partial.startswith((b"OpusHead", b"OpusTags"))
+                        )
                     ):
                         raise MediaError("invalid_media")
                     packets += 1
                     partial.clear()
             sequence += 1
             ended = bool(header[5] & 4)
-    if not ended or partial or packets < (3 if native_opus else 2):
+    complete_inbound_ptt = (
+        policy is _OggValidationPolicy.INBOUND_PTT_COMPLETE_EOF and native_opus
+    )
+    if (
+        not ended
+        and not complete_inbound_ptt
+        or partial
+        or packets < (3 if native_opus else 2)
+    ):
         raise MediaError("invalid_media")
 
 
@@ -820,6 +872,8 @@ class MediaManager:
         chunks: AsyncIterator[bytes],
         max_bytes: int,
         declared_type: str | None,
+        *,
+        ogg_policy: _OggValidationPolicy = _OggValidationPolicy.STRICT,
     ) -> None:
         async with self.store.lock:
             files = [r for r in self.store.records.values() if r.get("file")]
@@ -875,7 +929,7 @@ class MediaManager:
             await _io(self.hass, stream.close)
             stream = None
             if mime == "audio/ogg":
-                await _io(self.hass, _validate_ogg, path, native_opus)
+                await _io(self.hass, _validate_ogg, path, native_opus, ogg_policy)
             record.update(
                 file=name,
                 size_bytes=size,
@@ -924,8 +978,24 @@ class MediaManager:
             self.store.leases[identifier] = self.store.leases.get(identifier, 0) + 1
             try:
                 async with async_download(self.client, record) as (metadata, chunks):
+                    # This is the sole selector of the inbound compatibility
+                    # policy: trusted callback PTT metadata, exact backend binding,
+                    # supported GOWS readiness, and an Ogg declaration. The byte
+                    # validator still requires actual native Opus and clean EOF.
+                    ogg_policy = _OggValidationPolicy.STRICT
+                    if (
+                        record["type"] == "inbound"
+                        and record["metadata"]["kind"] == "audio"
+                        and record["metadata"]["voice_note"] is True
+                        and metadata["mime_type"] == "audio/ogg"
+                    ):
+                        ogg_policy = _OggValidationPolicy.INBOUND_PTT_COMPLETE_EOF
                     await self._store_stream(
-                        working, chunks, max_bytes, metadata["mime_type"]
+                        working,
+                        chunks,
+                        max_bytes,
+                        metadata["mime_type"],
+                        ogg_policy=ogg_policy,
                     )
                     stored = True
                 await self._validate(record)

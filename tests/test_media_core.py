@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ._loader import load_integration_module
+from ._ogg_fixtures import invalid_opus_cases
 
 media = load_integration_module("media")
 backend = load_integration_module("media_backend")
@@ -369,25 +370,9 @@ async def test_inbound_retrieval_coalesces_and_enforces_exact_scope(
 
 def ogg_opus():
     """Generate a small valid framed Opus stream using synthetic silence."""
+    from ._ogg_fixtures import opus
 
-    def page(packet, sequence, flags, granule):
-        header = bytearray(
-            b"OggS\x00"
-            + bytes([flags])
-            + granule.to_bytes(8, "little")
-            + (42).to_bytes(4, "little")
-            + sequence.to_bytes(4, "little")
-            + b"\0" * 4
-            + b"\x01"
-            + bytes([len(packet)])
-        )
-        full = header + packet
-        full[22:26] = media._ogg_crc(full).to_bytes(4, "little")
-        return bytes(full)
-
-    head = b"OpusHead\x01\x01\x00\x00\x80\xbb\x00\x00\x00\x00\x00"
-    tags = b"OpusTags\x04\x00\x00\x00test\x00\x00\x00\x00"
-    return page(head, 0, 2, 0) + page(tags, 1, 0, 0) + page(b"\xf8\xff\xfe", 2, 4, 960)
+    return opus()
 
 
 async def test_native_voice_staging_verifies_full_ogg_not_substring(tmp_path):
@@ -745,3 +730,162 @@ async def test_announced_oversize_never_requests_backend_download(
         await result.async_get_media("direct", "msg", attachment["attachment_id"])
     download.assert_not_called()
     assert result.store.reservations == 0
+
+
+@pytest.mark.parametrize("eos", [True, False])
+async def test_native_ptt_internal_policy_preserves_original_complete_stream(
+    tmp_path, eos
+):
+    from ._ogg_fixtures import opus
+
+    original = opus(eos=eos)
+    path = tmp_path / "synthetic.ogg"
+    path.write_bytes(original)
+    kind, mime, native = media.sniff_media(original[:4096])
+    assert (kind, mime, native) == ("audio", "audio/ogg", True)
+    media._validate_ogg(
+        path, native, media._OggValidationPolicy.INBOUND_PTT_COMPLETE_EOF
+    )
+    assert path.read_bytes() == original
+    if not eos:
+        with pytest.raises(media.MediaError, match="invalid_media"):
+            media._validate_ogg(path, native)
+        with pytest.raises(media.MediaError, match="invalid_media"):
+            media._validate_ogg(
+                path, False, media._OggValidationPolicy.INBOUND_PTT_COMPLETE_EOF
+            )
+    result = await manager(tmp_path)
+    if eos:
+        receipt = await result.async_stage(
+            "direct", "admin", chunks(original), "audio/ogg", "silence.ogg"
+        )
+        assert receipt.native_opus
+        assert receipt.sha256 == hashlib.sha256(original).hexdigest()
+    else:
+        with pytest.raises(media.MediaError, match="invalid_media"):
+            await result.async_stage(
+                "direct", "admin", chunks(original), "audio/ogg", "silence.ogg"
+            )
+        assert not result.store.records
+        assert not list(result.store.path.glob("*.bin"))
+        assert result.store.reservations == 0
+
+
+@pytest.mark.parametrize("eos", [True, False])
+@pytest.mark.parametrize(
+    "case",
+    invalid_opus_cases(eos=False),
+)
+def test_native_ptt_policy_still_rejects_structural_and_codec_header_damage(
+    tmp_path, eos, case
+):
+    from ._ogg_fixtures import invalid_opus_cases
+
+    original = invalid_opus_cases(eos=eos)[case]
+    path = tmp_path / "malformed.ogg"
+    path.write_bytes(original)
+    for policy in media._OggValidationPolicy:
+
+        def validate(policy=policy):
+            _, _, native = media.sniff_media(original[:4096])
+            media._validate_ogg(path, native, policy)
+
+        with pytest.raises(media.MediaError):
+            validate()
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("classification", ["audio", None, "document", "image"])
+async def test_no_eos_exception_is_not_selected_for_other_inbound_kinds(
+    tmp_path, classification
+):
+    from ._ogg_fixtures import opus
+    from .test_media_backend import Response, client
+
+    original = opus(eos=False)
+    incoming = payload(info=classification, document=classification == "document")
+    content = incoming["_data"]["Message"]
+    next(iter(content.values()))["fileLength"] = len(original)
+    downloaded = incoming | {
+        "media": {
+            "mimetype": "audio/ogg; codecs=opus",
+            "url": "/api/files/synthetic.ogg",
+        }
+    }
+    result = await manager(tmp_path)
+    result.client = client(
+        Response(json.dumps(downloaded).encode()), Response(original)
+    )
+    attachment = (await result.async_observe(incoming, "msg", "direct"))[0]
+    with pytest.raises(media.MediaError, match="invalid_media"):
+        await result.async_get_media("direct", "msg", attachment["attachment_id"])
+    assert len(result.client._session.calls) == 2
+    assert not list(result.store.path.glob("*.bin"))
+    assert result.store.reservations == 0
+
+
+def test_generated_silence_without_eos_decodes_when_ffmpeg_available(tmp_path):
+    import shutil
+    import subprocess
+
+    from ._ogg_fixtures import remove_eos
+
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        pytest.skip("optional development decoder unavailable")
+    complete = tmp_path / "generated-silence.ogg"
+    generated = subprocess.run(
+        [
+            ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=48000:cl=mono",
+            "-t",
+            "0.1",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "16k",
+            "-map_metadata",
+            "-1",
+            str(complete),
+        ],
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+    assert generated.returncode == 0, generated.stderr.decode(errors="replace")
+    original = remove_eos(complete.read_bytes())
+    no_eos = tmp_path / "generated-silence-no-eos.ogg"
+    no_eos.write_bytes(original)
+    media._validate_ogg(complete, True)
+    media._validate_ogg(
+        no_eos, True, media._OggValidationPolicy.INBOUND_PTT_COMPLETE_EOF
+    )
+    with pytest.raises(media.MediaError, match="invalid_media"):
+        media._validate_ogg(no_eos, True)
+    decoded = subprocess.run(
+        [
+            ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(no_eos),
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-",
+        ],
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+    assert decoded.returncode == 0, decoded.stderr.decode(errors="replace")
+    assert decoded.stdout
+    assert no_eos.read_bytes() == original

@@ -431,3 +431,118 @@ async def test_upload_rejects_top_level_compression_before_multipart(tmp_path):
     assert response.status == 400
     assert not transport.store.records
     assert not list(transport.store.path.glob("*.bin"))
+
+
+@pytest.mark.parametrize("eos", [True, False])
+async def test_exact_bound_native_ptt_eos_or_clean_eof_delivers_original_binary(
+    tmp_path, eos
+):
+    import asyncio
+    import hashlib
+    import json
+
+    from ._ogg_fixtures import five_page_voice_note, split_pages
+    from .test_media_backend import Response
+    from .test_media_backend import client as backend_client
+
+    original = five_page_voice_note(eos=eos)
+    pages = split_pages(original)
+    assert len(pages) == 5
+    assert (
+        sum(value < 255 for item in pages for value in item[27 : 27 + item[26]]) == 35
+    )
+    async with http_client(tmp_path) as (client, transport, _):
+        incoming = payload()
+        incoming["_data"]["Message"]["audioMessage"]["fileLength"] = len(original)
+        downloaded = incoming | {
+            "session": "house",
+            "media": {
+                "mimetype": "audio/ogg; codecs=opus",
+                "url": "/api/files/synthetic-voice.ogg",
+            },
+        }
+        transport.client = backend_client(
+            Response(json.dumps(downloaded).encode()),
+            Response(original, content_length=len(original)),
+        )
+        attachment = (await transport.async_observe(incoming, "msg", "direct"))[0]
+        assert attachment["kind"] == "audio"
+        assert attachment["voice_note"] is True
+        assert attachment["retrievable"] is True
+        result = await transport.async_get_media(
+            "direct", "msg", attachment["attachment_id"]
+        )
+        assert result["status"] == "ready"
+        assert result["attachment"]["kind"] == "audio"
+        assert result["attachment"]["voice_note"] is True
+        assert result["attachment"]["mime_type"] == "audio/ogg"
+        assert result["attachment"]["size_bytes"] == len(original)
+        assert result["attachment"]["sha256"] == hashlib.sha256(original).hexdigest()
+        finished = asyncio.Event()
+        original_download = transport.async_download
+
+        @asynccontextmanager
+        async def tracked_download(*args):
+            try:
+                async with original_download(*args) as value:
+                    yield value
+            finally:
+                finished.set()
+
+        transport.async_download = tracked_download
+        response = await client.get(
+            result["download"]["path"], headers={"Authorization": "Bearer test-admin"}
+        )
+        assert response.status == 200
+        received = await response.read()
+        assert received == original
+        assert response.headers["Content-Length"] == str(len(original))
+        assert response.headers["Content-Type"] == "audio/ogg"
+        assert hashlib.sha256(received).hexdigest() == result["attachment"]["sha256"]
+        backend_calls = transport.client._session.calls
+        assert len(backend_calls) == 2
+        assert backend_calls[0][1]["params"] == {"downloadMedia": "true"}
+        assert all(
+            call[1]["headers"]["X-Api-Key"] == "test-secret" for call in backend_calls
+        )
+        assert all(call[1]["allow_redirects"] is False for call in backend_calls)
+        await asyncio.wait_for(finished.wait(), 2)
+        assert not transport.store.leases
+        assert transport.store.reservations == 0
+
+
+@pytest.mark.parametrize(
+    ("mode", "status"),
+    [("complete", 201), ("no_eos", 422), ("query_policy", 422), ("field_policy", 400)],
+)
+async def test_upload_remains_eos_strict_and_cannot_select_inbound_policy(
+    tmp_path, mode, status
+):
+    from ._ogg_fixtures import opus
+
+    async with http_client(tmp_path) as (client, transport, _):
+        data = FormData()
+        data.add_field(
+            "file",
+            opus(eos=mode == "complete"),
+            filename="silence.ogg",
+            content_type="audio/ogg; codecs=opus",
+        )
+        if mode == "field_policy":
+            data.add_field("ogg_policy", "INBOUND_PTT_COMPLETE_EOF")
+        url = "/api/waha_whatsapp/entry/conversations/direct/media"
+        if mode == "query_policy":
+            url += "?ogg_policy=INBOUND_PTT_COMPLETE_EOF"
+        response = await client.post(
+            url, data=data, headers={"Authorization": "Bearer test-admin"}
+        )
+        assert response.status == status
+        if mode == "complete":
+            receipt = await response.json()
+            assert transport.get_upload(
+                receipt["upload_id"], "direct", "admin"
+            ).native_opus
+        else:
+            assert not transport.store.records
+            assert not list(transport.store.path.glob("*.bin"))
+        assert transport.store.reservations == 0
