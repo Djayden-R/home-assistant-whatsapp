@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import math
+import time
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -67,6 +70,9 @@ class PendingPoll:
     settle_seconds: float
     person_entity_id: str | None = None
     conversation_id: str | None = None
+    origin: str = "automation"
+    client_request_id: str | None = None
+    emit_legacy_action: bool = True
     latest_vote_timestamp: float | None = None
     selected_title: str | None = None
     commit_at: float | None = None
@@ -80,6 +86,9 @@ class PendingPoll:
             "settle_seconds": self.settle_seconds,
             "person_entity_id": self.person_entity_id,
             "conversation_id": self.conversation_id,
+            "origin": self.origin,
+            "client_request_id": self.client_request_id,
+            "emit_legacy_action": self.emit_legacy_action,
             "latest_vote_timestamp": self.latest_vote_timestamp,
             "selected_title": self.selected_title,
             "commit_at": self.commit_at,
@@ -94,13 +103,26 @@ class PendingPoll:
         settle_seconds = data.get("settle_seconds")
         person_entity_id = data.get("person_entity_id")
         conversation_id = data.get("conversation_id")
+        origin = data.get("origin", "automation")
+        request_id = data.get("client_request_id")
+        legacy = data.get("emit_legacy_action", True)
         if (
             not isinstance(message_id, str)
             or not message_id
             or not isinstance(chat_id, str)
             or not chat_id
             or not isinstance(raw_options, dict)
+            or isinstance(settle_seconds, bool)
             or not isinstance(settle_seconds, int | float)
+            or not math.isfinite(settle_seconds)
+            or not 0 <= settle_seconds <= 30
+            or origin not in {"automation", "application"}
+            or type(legacy) is not bool
+            or (
+                request_id is not None
+                and (not isinstance(request_id, str) or not 1 <= len(request_id) <= 128)
+            )
+            or (origin == "application" and (not request_id or legacy))
             or (
                 person_entity_id is not None
                 and (
@@ -148,6 +170,9 @@ class PendingPoll:
             settle_seconds=float(settle_seconds),
             person_entity_id=person_entity_id,
             conversation_id=conversation_id,
+            origin=origin,
+            client_request_id=request_id,
+            emit_legacy_action=legacy,
             latest_vote_timestamp=(
                 float(latest_timestamp) if latest_timestamp is not None else None
             ),
@@ -264,6 +289,8 @@ class PollRegistry:
     def __init__(self) -> None:
         """Initialize an empty registry."""
         self._polls: dict[str, PendingPoll] = {}
+        self._selections: list[dict[str, Any]] = []
+        self._selection_sequence = 0
 
     def register(
         self,
@@ -273,8 +300,24 @@ class PollRegistry:
         settle_seconds: float,
         person_entity_id: str | None = None,
         conversation_id: str | None = None,
+        *,
+        origin: str = "automation",
+        client_request_id: str | None = None,
+        emit_legacy_action: bool = True,
     ) -> None:
         """Register one outbound poll by its WAHA message ID."""
+        if (
+            origin not in {"automation", "application"}
+            or type(emit_legacy_action) is not bool
+        ):
+            raise PollValidationError("Invalid poll origin")
+        if origin == "application" and (
+            not isinstance(client_request_id, str)
+            or not 1 <= len(client_request_id) <= 128
+            or emit_legacy_action
+            or not conversation_id
+        ):
+            raise PollValidationError("Application polls require durable correlation")
         message_id = canonical_message_id(message_id)
         self._polls[message_id] = PendingPoll(
             message_id=message_id,
@@ -283,6 +326,9 @@ class PollRegistry:
             settle_seconds=settle_seconds,
             person_entity_id=person_entity_id,
             conversation_id=conversation_id,
+            origin=origin,
+            client_request_id=client_request_id,
+            emit_legacy_action=emit_legacy_action,
         )
 
     def apply_vote(self, vote: PollVote, received_at: float) -> bool:
@@ -347,13 +393,68 @@ class PollRegistry:
         del self._polls[message_id]
         return True, action
 
+    def restore_uncommitted(self, pending: PendingPoll, selection: dict | None) -> None:
+        """Retain an unannounced vote after a failed acknowledged write."""
+        self._polls.setdefault(pending.message_id, pending)
+        if selection is not None:
+            self._selections = [
+                r
+                for r in self._selections
+                if r["payload"].get("selection_sequence")
+                != selection.get("selection_sequence")
+            ]
+
     def as_dict(self) -> dict[str, Any]:
         """Serialize all unprocessed polls."""
-        return {"polls": [pending.as_dict() for pending in self._polls.values()]}
+        return {
+            "polls": [pending.as_dict() for pending in self._polls.values()],
+            "selections": deepcopy(self._selections),
+            "selection_sequence": self._selection_sequence,
+        }
+
+    def remember_selection(self, payload: dict[str, Any]) -> None:
+        """Retain bounded application receipts for reconnect recovery."""
+        self._selection_sequence += 1
+        payload["selection_sequence"] = self._selection_sequence
+        cutoff = time.time() - 7 * 86400
+        self._selections = [r for r in self._selections if r["saved_at"] >= cutoff][
+            -2047:
+        ]
+        self._selections.append({"payload": deepcopy(payload), "saved_at": time.time()})
+
+    def selections(
+        self, conversation_id: str, after_sequence: int, limit: int
+    ) -> dict[str, Any]:
+        """Return phone-free immutable application events in ascending sequence."""
+        if (
+            type(after_sequence) is not int
+            or after_sequence < 0
+            or type(limit) is not int
+            or not 1 <= limit <= 100
+        ):
+            raise PollValidationError("Invalid receipt page")
+        cutoff = time.time() - 7 * 86400
+        rows = [
+            r["payload"]
+            for r in self._selections
+            if r["saved_at"] >= cutoff
+            and r["payload"].get("conversation_id") == conversation_id
+            and r["payload"].get("selection_sequence", 0) > after_sequence
+        ]
+        page = rows[:limit]
+        return {
+            "events": deepcopy(page),
+            "has_more": len(rows) > limit,
+            "next_sequence": page[-1]["selection_sequence"]
+            if page
+            else self._selection_sequence,
+        }
 
     def load(self, data: Mapping[str, Any] | None) -> None:
         """Replace registry contents with valid stored records."""
         self._polls.clear()
+        self._selections.clear()
+        self._selection_sequence = 0
         if not isinstance(data, Mapping) or not isinstance(data.get("polls"), list):
             return
         for raw_pending in data["polls"]:
@@ -362,6 +463,55 @@ class PollRegistry:
             pending = PendingPoll.from_dict(raw_pending)
             if pending is not None:
                 self._polls[pending.message_id] = pending
+        sequence = data.get("selection_sequence", 0)
+        if type(sequence) is int and sequence >= 0:
+            self._selection_sequence = sequence
+        rows = data.get("selections", [])
+        if not isinstance(rows, list):
+            return
+        seen = set()
+        for row in rows[-2048:]:
+            if not isinstance(row, dict):
+                continue
+            saved = row.get("saved_at")
+            payload = row.get("payload")
+            if (
+                isinstance(saved, bool)
+                or not isinstance(saved, int | float)
+                or not math.isfinite(saved)
+                or not time.time() - 7 * 86400 <= saved <= time.time() + 300
+                or not isinstance(payload, dict)
+                or payload.get("origin") != "application"
+                or payload.get("type") != "poll.selection_settled"
+                or type(payload.get("selection_sequence")) is not int
+                or payload["selection_sequence"] < 1
+                or payload["selection_sequence"] in seen
+                or any(
+                    not isinstance(payload.get(k), str)
+                    or not 1 <= len(payload[k]) <= 256
+                    for k in (
+                        "conversation_id",
+                        "config_entry_id",
+                        "event_id",
+                        "client_request_id",
+                        "vote_occurred_at",
+                    )
+                )
+                or not isinstance(payload.get("sender"), dict)
+                or not isinstance(payload.get("poll"), dict)
+                or any(
+                    not isinstance(payload["poll"].get(k), str)
+                    or not 1 <= len(payload["poll"][k]) <= 256
+                    for k in ("message_id", "action_id")
+                )
+            ):
+                continue
+            seen.add(payload["selection_sequence"])
+            self._selections.append(deepcopy(row))
+            self._selection_sequence = max(
+                self._selection_sequence, payload["selection_sequence"]
+            )
+        self._selections.sort(key=lambda r: r["payload"]["selection_sequence"])
 
 
 def _same_chat_id(left: str, right: str) -> bool:

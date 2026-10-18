@@ -538,3 +538,36 @@ node --test waha/tests/*.test.mjs
 
 See [CHANGELOG.md](CHANGELOG.md), [RELEASING.md](RELEASING.md), and
 [`waha/DOCS.md`](waha/DOCS.md) for more details.
+
+## Application-owned polls (1.9.0)
+
+`waha_whatsapp.send_poll_to_conversation` sends an immutable keyed poll to a
+current direct contact. It requires `config_entry_id`, `conversation_id`,
+`client_request_id`, `message`, and 2–12 `{action, title}` choices; optional
+`title`, `settle_seconds` (0–30, default 0) and `content_redacted` are supported.
+It returns the same accepted/failed/unknown/replayed correlation outcome as
+keyed text. Never resend an uncertain submission with a new key. The provider
+message mapping and poll registration must both be acknowledged durably before
+success is returned. Application action IDs are opaque consumer data.
+
+Authenticated settled selections emit `waha_whatsapp_event` with type
+`poll.selection_settled`, `origin: application`, `client_request_id`, original
+`vote_occurred_at`, monotonically increasing `selection_sequence`, current
+contact identity and `poll.message_id/action_id`. `poll.selected_option` is null
+for application polls to avoid copying sensitive labels into observations.
+Application polls never emit `mobile_app_notification_action`. Existing
+automation-owned polls preserve their existing event/action behavior.
+
+`waha_whatsapp.get_poll_selections` takes the connection/conversation IDs and
+optional `after_sequence` (default 0), `limit` (1–100, default 100). It returns
+`events`, `has_more`, `next_sequence` for the current contact only. Selections
+are committed in the same strict atomic, fsync-backed private snapshot as
+pending polls **before** event emission. Retention is bounded to seven days and
+the latest 2048 application selections per connection; it is recovery, not
+unlimited history. A failed write emits nothing and preserves the pending vote
+for bounded storage retry and startup recovery.
+
+Consumers should recover on connection/reconnection, deduplicate event IDs
+durably, use the original vote time, and recheck their own grants. They own all
+reminder/task/health semantics; this integration contains none of those rules.
+Capabilities `application_polls` and `poll_selection_replay` advertise support.

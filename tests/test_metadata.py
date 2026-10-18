@@ -41,6 +41,8 @@ def test_service_metadata_matches_actions() -> None:
         "send_message",
         "send_media_to_conversation",
         "send_poll",
+        "send_poll_to_conversation",
+        "get_poll_selections",
         "send_to_conversation",
         "unregister_command",
     }

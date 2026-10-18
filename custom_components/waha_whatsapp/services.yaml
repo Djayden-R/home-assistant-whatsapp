@@ -71,6 +71,44 @@ send_poll:
       selector:
         boolean:
 
+send_poll_to_conversation:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        text:
+    conversation_id:
+      required: true
+      selector:
+        text:
+    client_request_id:
+      required: true
+      selector:
+        text:
+    message:
+      required: true
+      selector:
+        text:
+          multiline: true
+    title:
+      selector:
+        text:
+    actions:
+      required: true
+      selector:
+        object:
+    settle_seconds:
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 30
+          step: 1
+    content_redacted:
+      default: false
+      selector:
+        boolean:
+
 send_to_conversation:
   fields:
     conversation_id:
@@ -252,3 +290,29 @@ send_media_to_conversation:
       default: false
       selector:
         boolean:
+
+get_poll_selections:
+  name: Replay application poll selections
+  description: Return authenticated application selections for a current direct contact, retained for up to seven days and 2048 selections per connection. Does not replay ordinary chat or household automation actions.
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        text:
+    conversation_id:
+      required: true
+      selector:
+        text:
+    after_sequence:
+      default: 0
+      selector:
+        number:
+          min: 0
+          mode: box
+    limit:
+      default: 100
+      selector:
+        number:
+          min: 1
+          max: 100
+          mode: box

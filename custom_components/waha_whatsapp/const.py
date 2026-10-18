@@ -46,6 +46,8 @@ ATTR_CONTENT_REDACTED: Final = "content_redacted"
 
 SERVICE_SEND_MESSAGE: Final = "send_message"
 SERVICE_SEND_POLL: Final = "send_poll"
+SERVICE_SEND_POLL_TO_CONVERSATION: Final = "send_poll_to_conversation"
+SERVICE_GET_POLL_SELECTIONS: Final = "get_poll_selections"
 SERVICE_SEND_TO_CONVERSATION: Final = "send_to_conversation"
 SERVICE_GET_CHANNEL_CAPABILITIES: Final = "get_channel_capabilities"
 SERVICE_GET_GROUP_MEMBERSHIP: Final = "get_group_membership"

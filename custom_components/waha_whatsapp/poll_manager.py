@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.helpers.storage import Store
 
 from .api import WahaClient, WahaError
 from .const import (
@@ -21,6 +20,7 @@ from .const import (
     EVENT_MOBILE_APP_NOTIFICATION_ACTION,
     EVENT_WAHA_WHATSAPP,
 )
+from .correlated import DurableStore
 from .polls import (
     PendingPoll,
     PollOption,
@@ -63,11 +63,11 @@ class WahaPollManager:
         self._webhook_secret = webhook_secret
         self._channel_registry = channel_registry
         self._registry = PollRegistry()
-        self._store = Store[dict[str, Any]](
+        self._store = DurableStore(
             hass,
             STORAGE_VERSION,
             f"waha_whatsapp.polls.{entry.entry_id}",
-            private=True,
+            max_storage_bytes=8 * 1024 * 1024,
         )
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self.failed_vote_count = 0
@@ -121,6 +121,10 @@ class WahaPollManager:
         options: tuple[PollOption, ...],
         settle_seconds: float,
         person_entity_id: str | None = None,
+        *,
+        origin: str = "automation",
+        client_request_id: str | None = None,
+        emit_legacy_action: bool = True,
     ) -> None:
         """Persist the correlation data for one outbound actionable poll."""
         conversation_id = None
@@ -138,6 +142,9 @@ class WahaPollManager:
             settle_seconds,
             person_entity_id,
             conversation_id,
+            origin=origin,
+            client_request_id=client_request_id,
+            emit_legacy_action=emit_legacy_action,
         )
         await self._async_save()
 
@@ -237,9 +244,25 @@ class WahaPollManager:
                 self._schedule_commit(message_id, vote_timestamp, pending.commit_at)
             return
 
-        await self._async_save()
+        selection = None
+        if pending is not None and pending.origin == "application":
+            selection = self._settled_selection(pending, vote_timestamp, action)
+            if selection is not None:
+                self._registry.remember_selection(selection)
+        try:
+            await self._async_save()
+        except Exception:
+            if pending is not None and pending.origin == "application":
+                # The last durable snapshot still contains the uncommitted vote.
+                # Restore it in memory too; never announce a non-durable action.
+                self._registry.restore_uncommitted(pending, selection)
+                _LOGGER.warning(
+                    "Application poll decision not published: persistence failed"
+                )
+            raise
+        getattr(self, "_persistence_retries", {}).pop(message_id, None)
         context = await self._async_person_context(person_entity_id)
-        if action is not None:
+        if action is not None and (pending is None or pending.emit_legacy_action):
             self._hass.bus.async_fire(
                 EVENT_MOBILE_APP_NOTIFICATION_ACTION,
                 {"action": action},
@@ -247,9 +270,14 @@ class WahaPollManager:
             )
         if pending is not None:
             try:
-                self._publish_settled_selection(
-                    pending, vote_timestamp, action, context
-                )
+                if selection is not None:
+                    self._hass.bus.async_fire(
+                        EVENT_WAHA_WHATSAPP, selection, context=context
+                    )
+                else:
+                    self._publish_settled_selection(
+                        pending, vote_timestamp, action, context
+                    )
             except Exception:
                 # Channel observation must not undo a successful legacy action.
                 _LOGGER.exception("Could not publish settled WAHA poll channel event")
@@ -262,6 +290,13 @@ class WahaPollManager:
         context: Context | None,
     ) -> None:
         """Emit one privacy-safe channel event for a configured direct chat."""
+        payload = self._settled_selection(pending, vote_timestamp, action)
+        if payload is not None:
+            self._hass.bus.async_fire(EVENT_WAHA_WHATSAPP, payload, context=context)
+
+    def _settled_selection(
+        self, pending, vote_timestamp, action
+    ) -> dict[str, Any] | None:
         if pending.conversation_id is None:
             # Polls stored before v1.4.1 have no safe contact association.
             return
@@ -271,31 +306,47 @@ class WahaPollManager:
         event_id = self._channel_registry.event_token(
             f"poll.selection_settled:{pending.message_id}:{vote_timestamp}"
         )
-        self._hass.bus.async_fire(
-            EVENT_WAHA_WHATSAPP,
-            {
-                "schema_version": CHANNEL_SCHEMA_VERSION,
-                "event_id": event_id,
-                "type": "poll.selection_settled",
-                "config_entry_id": self._entry.entry_id,
-                "conversation_id": contact.conversation_id,
-                "conversation_type": "direct",
-                "occurred_at": datetime.now(UTC).isoformat(),
-                "sender": contact.event_sender(),
-                "poll": {
-                    "message_id": self._channel_registry.message_token(
-                        pending.message_id
-                    ),
-                    "selected_option": pending.selected_title,
-                    "action_id": action,
-                },
+        return {
+            "schema_version": CHANNEL_SCHEMA_VERSION,
+            "event_id": event_id,
+            "type": "poll.selection_settled",
+            "config_entry_id": self._entry.entry_id,
+            "conversation_id": contact.conversation_id,
+            "conversation_type": "direct",
+            "occurred_at": datetime.now(UTC).isoformat(),
+            "sender": contact.event_sender(),
+            "poll": {
+                "message_id": self._channel_registry.message_token(pending.message_id),
+                "selected_option": (
+                    None if pending.origin == "application" else pending.selected_title
+                ),
+                "action_id": action,
             },
-            context=context,
-        )
+            **(
+                {
+                    "origin": pending.origin,
+                    "client_request_id": pending.client_request_id,
+                    "vote_occurred_at": datetime.fromtimestamp(
+                        vote_timestamp, UTC
+                    ).isoformat(),
+                }
+                if pending.origin == "application"
+                else {}
+            ),
+        }
+
+    def selections(self, conversation_id, after_sequence=0, limit=100):
+        """Read the bounded application receipt journal for one current contact."""
+        if self._channel_registry.resolve_conversation(conversation_id) is None:
+            return {"events": [], "has_more": False, "next_sequence": after_sequence}
+        return self._registry.selections(conversation_id, after_sequence, limit)
 
     async def _async_save(self) -> None:
         """Write correlation state immediately so restarts do not lose votes."""
-        await self._store.async_save(self._registry.as_dict())
+        if not hasattr(self, "_save_lock"):
+            self._save_lock = asyncio.Lock()
+        async with self._save_lock:
+            await self._store.async_save(self._registry.as_dict())
 
     async def _async_resolve_vote_lids(self, vote: PollVote) -> PollVote | None:
         """Resolve alternate direct-chat identities through WAHA itself."""

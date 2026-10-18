@@ -76,10 +76,12 @@ from .const import (
     DOMAIN,
     SERVICE_GET_CHANNEL_CAPABILITIES,
     SERVICE_GET_GROUP_MEMBERSHIP,
+    SERVICE_GET_POLL_SELECTIONS,
     SERVICE_LIST_COMMANDS,
     SERVICE_REGISTER_COMMAND,
     SERVICE_SEND_MESSAGE,
     SERVICE_SEND_POLL,
+    SERVICE_SEND_POLL_TO_CONVERSATION,
     SERVICE_SEND_TO_CONVERSATION,
     SERVICE_UNREGISTER_COMMAND,
 )
@@ -107,6 +109,7 @@ from .migration import (
 )
 from .outbound import OutboundObserver, async_send_observed
 from .poll_manager import WahaPollManager
+from .poll_send import async_send_poll_to_conversation
 from .polls import PollValidationError, build_poll_options
 
 _LOGGER = logging.getLogger(__name__)
@@ -221,6 +224,43 @@ SEND_POLL_SCHEMA = vol.Schema(
     }
 )
 
+SEND_POLL_TO_CONVERSATION_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_CONFIG_ENTRY_ID): cv.string,
+        vol.Required(ATTR_CONVERSATION_ID): vol.All(
+            cv.string, vol.Length(min=1, max=256)
+        ),
+        vol.Required(ATTR_CLIENT_REQUEST_ID): vol.All(
+            cv.string, vol.Length(min=1, max=128)
+        ),
+        vol.Required(ATTR_MESSAGE): vol.All(cv.string, vol.Length(min=1, max=4096)),
+        vol.Optional(ATTR_TITLE): vol.All(cv.string, vol.Length(max=128)),
+        vol.Required(ATTR_ACTIONS): vol.All(
+            cv.ensure_list, [POLL_ACTION_SCHEMA], vol.Length(min=2, max=12)
+        ),
+        vol.Optional(ATTR_SETTLE_SECONDS, default=0): vol.All(
+            vol.Coerce(float), vol.Range(min=0, max=30)
+        ),
+        vol.Optional(ATTR_CONTENT_REDACTED, default=False): cv.boolean,
+    }
+)
+
+
+GET_POLL_SELECTIONS_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_CONFIG_ENTRY_ID): cv.string,
+        vol.Required(ATTR_CONVERSATION_ID): vol.All(
+            cv.string, vol.Length(min=1, max=256)
+        ),
+        vol.Optional("after_sequence", default=0): vol.All(
+            vol.Coerce(int), vol.Range(min=0)
+        ),
+        vol.Optional("limit", default=100): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=100)
+        ),
+    }
+)
+
 
 @dataclass(slots=True)
 class WahaRuntimeData:
@@ -283,6 +323,20 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         _async_handle_send_to_conversation,
         schema=SEND_TO_CONVERSATION_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SEND_POLL_TO_CONVERSATION,
+        _async_handle_send_poll_to_conversation,
+        schema=SEND_POLL_TO_CONVERSATION_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_POLL_SELECTIONS,
+        _async_handle_get_poll_selections,
+        schema=GET_POLL_SELECTIONS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,
@@ -711,6 +765,32 @@ async def _async_handle_send_poll(call: ServiceCall) -> ServiceResponse:
     return None
 
 
+async def _async_handle_send_poll_to_conversation(call: ServiceCall) -> ServiceResponse:
+    """Return the durable keyed outcome of one application-owned poll."""
+    entry = _loaded_entry(call.hass, call.data[CONF_CONFIG_ENTRY_ID])
+    data = {k: v for k, v in call.data.items() if k != CONF_CONFIG_ENTRY_ID}
+    try:
+        return await async_send_poll_to_conversation(entry, **data)
+    except CorrelatedSendError as err:
+        return {
+            "conversation_id": data[ATTR_CONVERSATION_ID],
+            "client_request_id": data[ATTR_CLIENT_REQUEST_ID],
+            "status": err.status,
+            "error_code": err.code,
+            "replayed": False,
+        }
+
+
+async def _async_handle_get_poll_selections(call: ServiceCall) -> ServiceResponse:
+    """Replay bounded application receipts for a current direct contact."""
+    entry = _loaded_entry(call.hass, call.data[CONF_CONFIG_ENTRY_ID])
+    return entry.runtime_data.poll_manager.selections(
+        call.data[ATTR_CONVERSATION_ID],
+        call.data.get("after_sequence", 0),
+        call.data.get("limit", 100),
+    )
+
+
 async def _async_handle_send_to_conversation(call: ServiceCall) -> ServiceResponse:
     """Send text through an eligible route, optionally recording durable intent."""
     conversation_id = call.data[ATTR_CONVERSATION_ID]
@@ -951,6 +1031,9 @@ async def _async_handle_get_channel_capabilities(call: ServiceCall) -> ServiceRe
 
     capabilities = {
         "schema_versions": [1],
+        "application_polls": connected
+        and runtime.correlated_sends.persistence_available,
+        "poll_selection_replay": True,
         "outbound_observations": (connected and observation_enabled),
         "correlated_sends": connected
         and runtime.correlated_sends.persistence_available,
