@@ -94,6 +94,9 @@ Once integration 1.8.1 is published, the owning HA session should:
 
 Source, decoder and synthetic HTTP checks are not a successful live phone
 end-to-end test. The household's runtime integration, consumer and HA state
-are unchanged by this source work. For rollback, disable media or return to
-the previous integration source through the supported update flow while
-preserving private stores; 1.8.0 will again reject the affected no-EOS notes.
+are unchanged by this source work. Prefer disabling media while preserving
+private stores over a source rollback. Keep the same request IDs for pending
+or unknown sends and never reset the ledger to force a retry. If returning to
+1.8.0 through the supported update flow, preserve private stores and reconcile
+outstanding sends first; that version restores both lifecycle defects above
+and rejects the affected no-EOS notes again.
