@@ -10,6 +10,9 @@ This is the schema-v1 interface implemented by integration 1.8.0. Source tests
 and synthetic fixtures are not a live Home Assistant or WhatsApp end-to-end
 test. The broader event envelope is in [CHANNEL_API.md](CHANNEL_API.md).
 
+Integration 1.8.1 adds the inbound voice-note EOF compatibility fix described
+below. Public schemas and capabilities remain version 1.
+
 ## Enablement and requirements
 
 The **Enable authenticated media transport** connection option is off by
@@ -407,6 +410,27 @@ recognition; this is not full semantic validation of every format. Unsupported
 signatures and declared/sniffed MIME mismatches are rejected. MIME allowlist:
 `audio/ogg`, `audio/mpeg`, `audio/mp4`, `audio/wav`, `audio/flac`,
 `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `application/pdf`.
+
+### Inbound voice notes without an EOS page
+
+Some GOWS PTT recordings end after a complete Ogg page and complete audio
+packet without setting the final end-of-stream (EOS) flag. Integration 1.8.0
+rejected these as `invalid_media` before returning bytes to the consumer.
+Integration 1.8.1 permits this case only on authenticated, exactly bound inbound
+PTT retrieval when the recording is verified Ogg/Opus. This follows the
+missing-EOS case anticipated by [RFC 7845 §3](https://www.rfc-editor.org/rfc/rfc7845.html#section-3).
+
+Every framing, lacing, CRC, stream identity, sequence, continuation, codec
+header and resource check still applies. Partial pages/packets, invalid
+headers, empty streams, chaining and data after an explicit EOS remain errors.
+The file is neither rewritten nor remuxed: original size and SHA-256 are
+preserved. A clean packet boundary does not prove a complete spoken sentence.
+
+The internal policy remains strict by default. Ordinary audio, unknown PTT
+classification, uploads and outbound native voice still require EOS. No action,
+multipart field or connection option can enable the compatibility policy.
+App 0.2.4, GOWS engine requirements and automatic-download settings are unchanged.
+See the [fix validation and update steps](VOICE_EOF_FIX.md).
 
 Files are under HA's private `.storage/waha_whatsapp_media` directory
 (directory mode `0700`, files `0600`). The global budgets are 25 MiB per

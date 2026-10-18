@@ -38,6 +38,23 @@ def test_binary_fixtures_have_correct_hashes_and_verified_containers():
             media._validate_ogg(path, True)
 
 
+def test_public_no_eos_fixture_preserves_bytes_and_requires_inbound_policy():
+    contract = _contract()
+    path = EXAMPLES / contract["binary_fixtures"]["inbound_voice_note_no_eos"]
+    original_bytes = path.read_bytes()
+    assert len(original_bytes) == 474
+    assert hashlib.sha256(original_bytes).hexdigest() == (
+        "8ef7b11eb64a1f0b136f3f0814869daa911e9071ec44254ac5ad4bf0c5ce2688"
+    )
+    assert media.sniff_media(original_bytes) == ("audio", "audio/ogg", True)
+    with pytest.raises(media.MediaError, match="invalid_media"):
+        media._validate_ogg(path, True)
+    media._validate_ogg(
+        path, True, media._OggValidationPolicy.INBOUND_PTT_COMPLETE_EOF
+    )
+    assert path.read_bytes() == original_bytes
+
+
 def test_inbound_examples_keep_identity_and_conservative_voice_facts():
     for fixture in _contract()["incoming_events"].values():
         event = fixture["event"]
