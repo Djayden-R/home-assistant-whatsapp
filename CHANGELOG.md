@@ -5,6 +5,32 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-10-19
+
+### Added
+
+- Add `send_poll_to_conversation` for immutable, keyed application-owned polls
+  to existing direct contacts, including accepted/failed/unknown outcomes,
+  conflict detection and duplicate protection through the existing send ledger.
+- Add authenticated application `poll.selection_settled` events with the
+  original vote time, client request ID and ordered selection sequence.
+  Application choices do not fire `mobile_app_notification_action`; their
+  visible labels are omitted from the event for privacy.
+- Add `get_poll_selections` for reconnect recovery, bounded to seven days and
+  the latest 2048 application decisions per connection. Preserve strict atomic
+  acknowledged persistence before publication, with failed-write recovery.
+- Advertise `application_polls` and `poll_selection_replay` capabilities and
+  document the generic send, event and recovery contracts.
+
+### Compatibility
+
+- Existing notify, text, media and automation-owned poll contracts remain.
+  Reminder scheduling, task completion, health records and agent decisions
+  remain entirely in consumers; the integration only transports choices.
+- The HAOS app stays at 0.2.4 with its existing engine and download defaults.
+- Source review and synthetic tests do not establish a live phone test.
+  Update/restart Home Assistant separately before using the new actions.
+
 ## [1.8.1] - 2026-10-18
 
 ### Fixed
@@ -321,3 +347,5 @@ automatic download defaults. Live HA/WhatsApp verification remains required.
 [1.4.1]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.4.1
 [1.5.0]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.5.0
 [1.6.0]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.6.0
+
+[1.9.0]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.9.0

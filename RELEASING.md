@@ -55,3 +55,17 @@ are unchanged, so this patch requires only an integration release tag.
 Complete the normal source validation and publication steps above; the
 [fix handoff](docs/VOICE_EOF_FIX.md) separates synthetic checks from the
 remaining HA update and fresh phone test.
+
+## Application-owned polls 1.9.0
+
+Only the HACS integration changes. App 0.2.4 and its pinned engine remain
+unchanged; do not publish an app tag or rebuild the app for this release.
+Validate the integration and matching version metadata, push to `main`, wait
+for its validation checks, then push the new annotated `v1.9.0` tag. The tag
+workflow creates the latest integration release for HACS.
+
+The release adds generic keyed poll transport and bounded selection recovery.
+Consumers own all action semantics and should recover on reconnect and apply
+durable event deduplication. Legacy household action events are unchanged.
+Source publication does not install the integration, reload configuration,
+restart Home Assistant or update consumer agents.
