@@ -13,6 +13,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from .activity import incoming_activity_provenance
 from .const import CHANNEL_SCHEMA_VERSION, CONF_SESSION, EVENT_WAHA_WHATSAPP
 from .helpers import recipient_chat_id
 from .inbound import (
@@ -182,6 +183,15 @@ class WahaGuestInboundManager:
             if self._media_manager is not None
             else None
         )
+        # Freeze the exact observed stay before contact/LID lookup can yield.
+        # A leave/rejoin must never transfer old traffic to a new membership.
+        activity_provenance = incoming_activity_provenance(
+            self._entry,
+            conversation_id,
+            payload.get("id"),
+            group_jid if is_group else (chat_id or raw_from),
+            raw_participant=media_participant if is_group else None,
+        )
 
         sender: dict[str, str] = {
             "participant_id": member["participant_id"],
@@ -226,7 +236,9 @@ class WahaGuestInboundManager:
             return False
         if event == "message":
             detail["message"]["id"] = await self._channel.async_remember_message(
-                raw_message_id, conversation_id
+                raw_message_id,
+                conversation_id,
+                **activity_provenance,
             )
         if not await self._channel.async_claim_event(raw_event_id):
             return False

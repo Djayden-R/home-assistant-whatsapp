@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import Context
 
+from .activity import incoming_activity_provenance
 from .const import CHANNEL_SCHEMA_VERSION, CONF_SESSION, EVENT_WAHA_WHATSAPP
 from .media import media_metadata
 
@@ -191,7 +192,14 @@ class WahaInboundManager:
         if event == "message":
             message = detail["message"]
             message["id"] = await self._registry.async_remember_message(
-                raw_message_id, contact.conversation_id
+                raw_message_id,
+                contact.conversation_id,
+                **incoming_activity_provenance(
+                    self._entry,
+                    contact.conversation_id,
+                    raw_message_id,
+                    payload.get("chatId") or raw_chat,
+                ),
             )
         if not await self._registry.async_claim_event(raw_event_id):
             self._reject("duplicate")

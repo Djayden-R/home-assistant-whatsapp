@@ -5,6 +5,22 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- Add generic `mark_conversation_read` and `set_conversation_typing` services
+  with schema-v1 response contracts, explicit capability reporting, exact
+  incoming-message eligibility, and bounded transient typing leases.
+- Document synthetic consumer fixtures, safe failure outcomes, GOWS version
+  requirements, and manual verification steps. Consumers own all read and
+  typing decisions.
+
+### Compatibility
+
+- Keep existing messaging, polls, media, commands, guest and group behavior.
+  Activity transport requires GOWS 2026.9.1 or newer; unsupported activity
+  leaves ordinary message transport available. Live phone behavior remains to
+  be verified before activation.
+
 ## [1.9.0] - 2026-10-19
 
 ### Added

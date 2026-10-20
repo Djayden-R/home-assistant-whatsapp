@@ -8,6 +8,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from .activity import incoming_activity_provenance
 from .api import WahaError
 from .const import CHANNEL_SCHEMA_VERSION, CONF_SESSION, EVENT_WAHA_WHATSAPP
 from .general_groups import GeneralGroupError
@@ -132,7 +133,19 @@ class WahaGeneralGroupInboundManager:
                 message["in_reply_to"] = None
             message["mentions"] = self._mentions(payload, destination, proof)
             message["id"] = await self._channel.async_remember_message(
-                raw_id, destination.conversation_id
+                raw_id,
+                destination.conversation_id,
+                **(
+                    incoming_activity_provenance(
+                        self._entry,
+                        destination.conversation_id,
+                        raw_id,
+                        destination.group_jid,
+                        raw_participant=media_participant,
+                    )
+                    if identity is not None
+                    else {}
+                ),
             )
         else:
             detail = await self._parser._reaction_detail(

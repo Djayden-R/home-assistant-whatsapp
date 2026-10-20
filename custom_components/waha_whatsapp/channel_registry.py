@@ -65,6 +65,9 @@ class _TrackedMessage:
     conversation_id: str
     recipient_fingerprint: str
     expires_at: float
+    incoming_binding: str | None = None
+    incoming_participant: str | None = None
+    incoming_read_id: str | None = None
 
 
 class _VolatileStore:
@@ -216,6 +219,18 @@ class ChannelRegistry:
                         conversation_id,
                         recipient_fingerprint,
                         float(expires_at),
+                        item.get("incoming_binding")
+                        if isinstance(item.get("incoming_binding"), str)
+                        and 1 <= len(item["incoming_binding"]) <= 2048
+                        else None,
+                        item.get("incoming_participant")
+                        if isinstance(item.get("incoming_participant"), str)
+                        and 1 <= len(item["incoming_participant"]) <= 128
+                        else None,
+                        item.get("incoming_read_id")
+                        if isinstance(item.get("incoming_read_id"), str)
+                        and 1 <= len(item["incoming_read_id"]) <= 512
+                        else None,
                     )
         events = data.get("events")
         if isinstance(events, list):
@@ -321,7 +336,15 @@ class ChannelRegistry:
             raise ValueError("WAHA event ID is missing")
         return self._token("event", raw_event_id, "evt")
 
-    async def async_remember_message(self, raw_id: str, conversation_id: str) -> str:
+    async def async_remember_message(
+        self,
+        raw_id: str,
+        conversation_id: str,
+        *,
+        incoming_binding: str | None = None,
+        incoming_participant: str | None = None,
+        incoming_read_id: str | None = None,
+    ) -> str:
         """Keep a WAHA ID privately for bounded quoted replies/reactions."""
         self._require_writable()
         destination = self._conversation_destination(conversation_id)
@@ -341,6 +364,9 @@ class ChannelRegistry:
                     conversation_id,
                     self._recipient_fingerprint(destination),
                     now + MESSAGE_TTL_SECONDS,
+                    incoming_binding,
+                    incoming_participant,
+                    incoming_read_id,
                 )
                 self._prune(now)
                 await self._save()
@@ -367,6 +393,25 @@ class ChannelRegistry:
         ):
             return None
         return item.raw_id
+
+    def resolve_incoming_message(
+        self, token: str, conversation_id: str
+    ) -> tuple[str, str, str | None] | None:
+        """Require observed incoming provenance in addition to quote ownership.
+
+        Legacy snapshots and outbound records deliberately have no incoming
+        binding. They remain valid quote targets but cannot authorize a read.
+        """
+        raw = self.resolve_message(token, conversation_id)
+        item = self._messages.get(token)
+        if (
+            raw is None
+            or item is None
+            or item.incoming_binding is None
+            or item.incoming_read_id is None
+        ):
+            return None
+        return item.incoming_read_id, item.incoming_binding, item.incoming_participant
 
     async def async_message_known(self, raw_id: str, conversation_id: str) -> bool:
         """Tell event consumers whether a reaction target was tracked here."""
@@ -471,6 +516,15 @@ class ChannelRegistry:
                         "conversation_id": item.conversation_id,
                         "recipient_fingerprint": item.recipient_fingerprint,
                         "expires_at": item.expires_at,
+                        **(
+                            {
+                                "incoming_binding": item.incoming_binding,
+                                "incoming_participant": item.incoming_participant,
+                                "incoming_read_id": item.incoming_read_id,
+                            }
+                            if item.incoming_binding is not None
+                            else {}
+                        ),
                     }
                     for token, item in self._messages.items()
                 ],

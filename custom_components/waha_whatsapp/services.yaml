@@ -316,3 +316,54 @@ get_poll_selections:
           min: 1
           max: 100
           mode: box
+
+mark_conversation_read:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: waha_whatsapp
+    conversation_id:
+      required: true
+      example: direct_example
+      selector:
+        text:
+    message_id:
+      required: true
+      example: msg_incoming_example
+      selector:
+        text:
+
+set_conversation_typing:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: waha_whatsapp
+    conversation_id:
+      required: true
+      example: direct_example
+      selector:
+        text:
+    activity_id:
+      required: true
+      example: activity_example_01
+      selector:
+        text:
+    state:
+      required: true
+      selector:
+        select:
+          options:
+            - typing
+            - paused
+    ttl_seconds:
+      selector:
+        number:
+          min: 3
+          max: 15
+          step: 1
+          mode: box
+          unit_of_measurement: s

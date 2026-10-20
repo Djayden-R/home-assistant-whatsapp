@@ -1,0 +1,86 @@
+{
+  "capabilities_supported": {
+    "activity_contract": {
+      "schema_version": 1,
+      "mark_read": true,
+      "typing": true,
+      "read_scope": "message"
+    }
+  },
+  "capabilities_unsupported": {
+    "activity_contract": {
+      "schema_version": 1,
+      "mark_read": false,
+      "typing": false,
+      "read_scope": "message"
+    }
+  },
+  "read_request": {
+    "config_entry_id": "entry_example",
+    "conversation_id": "direct_example",
+    "message_id": "msg_incoming_example"
+  },
+  "typing_start_request": {
+    "config_entry_id": "entry_example",
+    "conversation_id": "direct_example",
+    "activity_id": "activity_example_01",
+    "state": "typing",
+    "ttl_seconds": 10
+  },
+  "typing_pause_request": {
+    "config_entry_id": "entry_example",
+    "conversation_id": "direct_example",
+    "activity_id": "activity_example_01",
+    "state": "paused"
+  },
+  "read_accepted": {
+    "schema_version": 1,
+    "conversation_id": "direct_example",
+    "message_id": "msg_incoming_example",
+    "status": "accepted"
+  },
+  "read_failed": {
+    "schema_version": 1,
+    "conversation_id": "direct_example",
+    "message_id": "msg_incoming_example",
+    "status": "failed",
+    "error_code": "transport_failure"
+  },
+  "read_unknown": {
+    "schema_version": 1,
+    "conversation_id": "direct_example",
+    "message_id": "msg_incoming_example",
+    "status": "unknown",
+    "error_code": "outcome_unknown"
+  },
+  "typing_accepted": {
+    "schema_version": 1,
+    "conversation_id": "direct_example",
+    "activity_id": "activity_example_01",
+    "status": "accepted",
+    "applied": true
+  },
+  "typing_failed": {
+    "schema_version": 1,
+    "conversation_id": "direct_example",
+    "activity_id": "activity_example_01",
+    "status": "failed",
+    "applied": false,
+    "error_code": "transport_failure"
+  },
+  "typing_unknown": {
+    "schema_version": 1,
+    "conversation_id": "direct_example",
+    "activity_id": "activity_example_01",
+    "status": "unknown",
+    "applied": null,
+    "error_code": "outcome_unknown"
+  },
+  "typing_stale_pause_accepted": {
+    "schema_version": 1,
+    "conversation_id": "direct_example",
+    "activity_id": "activity_example_01",
+    "status": "accepted",
+    "applied": false
+  }
+}

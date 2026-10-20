@@ -160,6 +160,45 @@ class WahaClient:
             outcome="accepted" if isinstance(data, dict) else "unknown",
         )
 
+    async def async_mark_seen(
+        self, chat_id: str, message_id: str, *, participant: str | None = None
+    ) -> None:
+        """Read precisely one observed incoming message, never the whole chat."""
+        if not isinstance(message_id, str) or not message_id:
+            raise ValueError("An exact message is required")
+        if chat_id.endswith("@g.us"):
+            if not _valid_group_id(chat_id) or not participant:
+                raise ValueError("A group read requires its observed participant")
+        else:
+            chat_id = normalize_chat_id(chat_id)
+        payload = {
+            "session": self.session_name,
+            "chatId": chat_id,
+            "messageIds": [message_id],
+        }
+        if participant is not None:
+            payload["participant"] = participant
+        data = await self._request("POST", "/api/sendSeen", json=payload)
+        _validate_activity_result(data)
+
+    async def async_set_presence(self, chat_id: str | None, presence: str) -> None:
+        """Set chat typing/paused or session-wide offline, preserving defaults."""
+        if presence not in {"typing", "paused", "offline"} or (
+            (presence == "offline") != (chat_id is None)
+        ):
+            raise ValueError("Invalid activity presence")
+        payload = {"presence": presence}
+        if chat_id is not None:
+            if chat_id.endswith("@g.us"):
+                if not _valid_group_id(chat_id):
+                    raise ValueError("Invalid group destination")
+            else:
+                chat_id = normalize_chat_id(chat_id)
+            payload["chatId"] = chat_id
+        session = quote(self.session_name, safe="")
+        data = await self._request("POST", f"/api/{session}/presence", json=payload)
+        _validate_activity_result(data)
+
     async def async_send_group_text(
         self,
         group_id: str,
@@ -389,7 +428,13 @@ class WahaClient:
         ):
             raise WahaResponseError("WAHA returned invalid webhook configuration")
 
-        events = ["poll.vote", "poll.vote.failed", "message", "message.reaction"]
+        events = [
+            "poll.vote",
+            "poll.vote.failed",
+            "message",
+            "message.reaction",
+            "session.status",
+        ]
         if group_events:
             events.extend(
                 [
@@ -462,6 +507,19 @@ class WahaClient:
         if status in (401, 403):
             raise WahaAuthenticationError(message)
         raise WahaRequestError(message, status)
+
+
+def _validate_activity_result(data: Any) -> None:
+    """Void API success is valid; explicit refusal or malformed output is not."""
+    if data is False or (isinstance(data, dict) and data.get("success") is False):
+        raise WahaRequestError("WAHA refused activity", 400)
+    if (
+        data is not None
+        and data != ""
+        and data is not True
+        and not isinstance(data, dict)
+    ):
+        raise WahaResponseError("WAHA returned an invalid activity response")
 
 
 def _message_id(data: Any) -> str | None:

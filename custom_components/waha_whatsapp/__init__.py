@@ -15,7 +15,7 @@ import voluptuous as vol
 from aiohttp.web import Request, Response
 from homeassistant.components import webhook
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import CONF_API_KEY, Platform
+from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -37,6 +37,12 @@ from homeassistant.helpers import (
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 
+from .activity import (
+    ActivityError,
+    ActivityManager,
+    activity_response,
+    validate_activity_request,
+)
 from .api import (
     WahaAuthenticationError,
     WahaClient,
@@ -210,6 +216,19 @@ SEND_MEDIA_SCHEMA = vol.Schema(
     }
 )
 
+
+def _activity_schema(data: dict, *, typing: bool) -> dict:
+    """Keep service validation identical to the strict transport contract."""
+    try:
+        validate_activity_request(data, typing=typing)
+    except (ActivityError, TypeError, AttributeError) as err:
+        raise vol.Invalid("Invalid activity request") from err
+    return data
+
+
+MARK_CONVERSATION_READ_SCHEMA = vol.Schema(partial(_activity_schema, typing=False))
+SET_CONVERSATION_TYPING_SCHEMA = vol.Schema(partial(_activity_schema, typing=True))
+
 SEND_POLL_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_ENTITY_ID): cv.entity_id,
@@ -281,6 +300,7 @@ class WahaRuntimeData:
     general_groups: GeneralGroupManager
     general_group_inbound: WahaGeneralGroupInboundManager
     media_manager: MediaManager | None = None
+    activity_manager: ActivityManager | None = None
 
 
 type WahaConfigEntry = ConfigEntry[WahaRuntimeData]
@@ -289,6 +309,25 @@ type WahaConfigEntry = ConfigEntry[WahaRuntimeData]
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up integration-level WAHA actions."""
     register_media_views(hass)
+    for service, schema, handler in (
+        (
+            "mark_conversation_read",
+            MARK_CONVERSATION_READ_SCHEMA,
+            _async_handle_mark_read,
+        ),
+        (
+            "set_conversation_typing",
+            SET_CONVERSATION_TYPING_SCHEMA,
+            _async_handle_set_typing,
+        ),
+    ):
+        hass.services.async_register(
+            DOMAIN,
+            service,
+            handler,
+            schema=schema,
+            supports_response=SupportsResponse.ONLY,
+        )
     hass.services.async_register(
         DOMAIN,
         "get_media",
@@ -507,6 +546,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
     guest_events_capable = guest_events_requested and _supports_guest_webhooks(server)
     guest_webhook_failure = False
     guest_callbacks_ready = False
+    activity_manager = None
     webhook.async_register(
         hass,
         DOMAIN,
@@ -522,6 +562,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
             callback_id,
             request,
             general_group_inbound=general_group_inbound,
+            activity_manager=activity_manager,
         ),
         local_only=True,
     )
@@ -591,6 +632,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> bool
         general_group_inbound,
         media_manager,
     )
+    activity_manager = ActivityManager(hass, entry)
+    entry.runtime_data.activity_manager = activity_manager
+    entry.async_on_unload(
+        hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STOP, activity_manager.async_stop
+        )
+    )
     entry.async_on_unload(lambda: webhook.async_unregister(hass, webhook_id))
     entry.async_on_unload(poll_manager.stop)
     entry.async_on_unload(channel_registry.stop)
@@ -626,6 +674,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> boo
     """Unload a WAHA WhatsApp config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
+        if activity := getattr(entry.runtime_data, "activity_manager", None):
+            await activity.async_stop()
         # A replacement runtime must not read or overwrite this ledger until
         # every admitted send has persisted its final or uncertain outcome.
         await entry.runtime_data.correlated_sends.async_stop()
@@ -1051,6 +1101,14 @@ async def _async_handle_get_channel_capabilities(call: ServiceCall) -> ServiceRe
         connected and runtime.correlated_sends.persistence_available
     )
     capabilities["media_send"] = False
+    capabilities["activity_contract"] = {
+        "schema_version": 1,
+        "mark_read": False,
+        "typing": False,
+        "read_scope": "message",
+    }
+    if activity := getattr(runtime, "activity_manager", None):
+        capabilities["activity_contract"] = await activity.capabilities()
     if manager := getattr(runtime, "media_manager", None):
         effective = connected and manager.enabled and await manager.backend_ready()
         capabilities["media_contract"] = dict(manager.capabilities)
@@ -1075,6 +1133,42 @@ async def _async_media_principal(call: ServiceCall) -> str:
     if user is None or not user.is_active or not user.is_admin:
         raise MediaError("not_authorized", http_status=403)
     return user.id
+
+
+async def _async_activity_principal(call: ServiceCall) -> str:
+    """Apply the existing active-administrator policy at each effect boundary."""
+    try:
+        return await _async_media_principal(call)
+    except MediaError as err:
+        raise ActivityError("not_authorized") from err
+
+
+async def _async_handle_activity(call: ServiceCall, *, typing: bool) -> ServiceResponse:
+    try:
+        validate_activity_request(call.data, typing=typing)
+        await _async_activity_principal(call)
+        entry = _loaded_entry(call.hass, call.data[CONF_CONFIG_ENTRY_ID])
+        manager = getattr(entry.runtime_data, "activity_manager", None)
+        if manager is None:
+            raise ActivityError("channel_unavailable")
+        method = manager.async_set_typing if typing else manager.async_mark_read
+        return await method(call.data, partial(_async_activity_principal, call))
+    except ActivityError as err:
+        return activity_response(call.data, typing=typing, error=err)
+    except ServiceValidationError:
+        return activity_response(
+            call.data, typing=typing, error=ActivityError("channel_unavailable")
+        )
+
+
+async def _async_handle_mark_read(call: ServiceCall) -> ServiceResponse:
+    """Mark exactly one previously observed incoming message read."""
+    return await _async_handle_activity(call, typing=False)
+
+
+async def _async_handle_set_typing(call: ServiceCall) -> ServiceResponse:
+    """Apply a caller-directed, bounded typing lifetime."""
+    return await _async_handle_activity(call, typing=True)
 
 
 async def _async_handle_get_media(call: ServiceCall) -> ServiceResponse:
@@ -1339,6 +1433,7 @@ async def _async_handle_waha_webhook(
     request: Request,
     *,
     general_group_inbound: WahaGeneralGroupInboundManager | None = None,
+    activity_manager: ActivityManager | None = None,
 ) -> Response:
     """Authenticate and route one internal WAHA event."""
     del hass, webhook_id
@@ -1353,7 +1448,10 @@ async def _async_handle_waha_webhook(
     if payload is None:
         return Response(status=HTTPStatus.BAD_REQUEST)
     event_name = payload.get("event")
-    if event_name in ("poll.vote", "poll.vote.failed"):
+    if event_name == "session.status":
+        if activity_manager is not None:
+            await activity_manager.async_handle_session_status(payload)
+    elif event_name in ("poll.vote", "poll.vote.failed"):
         await manager.async_handle_payload(payload)
     elif isinstance(event_name, str) and event_name.startswith("group.v2."):
         if guest_callbacks_ready:

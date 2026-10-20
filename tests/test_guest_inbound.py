@@ -48,7 +48,7 @@ class FakeChannel:
     def event_token(self, raw):
         return f"evt_{raw}"
 
-    async def async_remember_message(self, raw, conversation_id):
+    async def async_remember_message(self, raw, conversation_id, **_provenance):
         self.messages.append((raw, conversation_id))
         return self.message_token(raw)
 
@@ -376,3 +376,106 @@ async def test_inbound_requires_fresh_roster_and_account_confirmation():
     assert await manager.async_handle_payload(envelope()) is False
     assert checks == [True]
     assert events == []
+
+
+@pytest.mark.parametrize("invalid_id", [None, 42, [], {}])
+async def test_malformed_incoming_id_remains_a_safe_refusal(invalid_id):
+    manager, _registry, _channel, events, _started = await make_manager()
+    data = envelope()
+    data["payload"]["id"] = invalid_id
+    assert await manager.async_handle_payload(data) is False
+    assert events == []
+
+
+async def test_guest_leave_rejoin_during_contact_lookup_keeps_old_read_provenance(
+    monkeypatch,
+):
+    """An old group message must not acquire a new guest stay's read grant."""
+    from unittest.mock import AsyncMock
+
+    from .test_activity import Clock
+
+    activity = load_integration_module("activity")
+    channel_module = load_integration_module("channel_registry")
+    monkeypatch.setattr(channel_module, "_notify_entity_id", lambda *_args: None)
+    manager, guests, _old_channel, events, _started = await make_manager()
+    entry = manager._entry
+    entry.state = "loaded"
+    entry.subentries = {}
+    entry.data["webhook_secret"] = "synthetic-secret"
+    client = SimpleNamespace(
+        session_name="house",
+        async_get_server=AsyncMock(
+            return_value=SimpleNamespace(engine="GOWS", version="2026.9.1")
+        ),
+        async_get_session=AsyncMock(
+            return_value=SimpleNamespace(name="house", status="WORKING", account_id=BOT)
+        ),
+        async_mark_seen=AsyncMock(),
+    )
+    channel = channel_module.ChannelRegistry(
+        manager._hass, entry, client, store=FakeStore()
+    )
+    channel.set_extra_route_resolver(
+        lambda conv: (
+            guests.resolve_route(conv) or guests.resolve_group_conversation(conv)
+        )
+    )
+    await channel.async_start()
+    entry.runtime_data = SimpleNamespace(
+        session=SimpleNamespace(account_id=BOT),
+        client=client,
+        channel_registry=channel,
+        general_groups=SimpleNamespace(resolve_conversation=lambda _conv: None),
+        guest_registry=guests,
+        guest_manager=SimpleNamespace(
+            async_reconcile=AsyncMock(return_value={"ready": True}),
+            async_verify_group_destination=AsyncMock(return_value=True),
+            async_verify_guest_destination=AsyncMock(return_value=True),
+        ),
+    )
+    activity_manager = activity.ActivityManager(
+        manager._hass, entry, schedule=Clock().schedule
+    )
+    entry.runtime_data.activity_manager = activity_manager
+    manager._channel = channel
+    previous = guests.resolve_member(GUEST, occurred_at=time())
+
+    async def leave_then_rejoin(_jid):
+        await guests.async_reconcile(
+            [],
+            observed_at=time() - 2,
+            verified_bot_jid=BOT,
+            security_verified=True,
+            bot_admin_verified=True,
+        )
+        await guests.async_reconcile(
+            [{"aliases": [GUEST], "kind": "guest", "role": "participant"}],
+            observed_at=time() - 1,
+            verified_bot_jid=BOT,
+            security_verified=True,
+            bot_admin_verified=True,
+        )
+        return None
+
+    channel.async_resolve_chat = leave_then_rejoin
+    data = envelope()
+    data["payload"]["id"] = f"false_{GROUP}_EXAMPLE01_{GUEST}"
+    data["payload"]["timestamp"] = time() - 3
+    assert await manager.async_handle_payload(data) is True
+    message = events[-1][1]
+    assert message["membership"]["membership_id"] == previous["membership_id"]
+    assert (
+        guests.resolve_member(GUEST, occurred_at=time())["membership_id"]
+        != previous["membership_id"]
+    )
+    response = await activity_manager.async_mark_read(
+        {
+            "config_entry_id": entry.entry_id,
+            "conversation_id": message["conversation_id"],
+            "message_id": message["message"]["id"],
+        },
+        AsyncMock(),
+    )
+    assert response["error_code"] == "invalid_message"
+    client.async_mark_seen.assert_not_awaited()

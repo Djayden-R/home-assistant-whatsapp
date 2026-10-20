@@ -438,6 +438,50 @@
           "description": "Omit caption and attachment metadata from outbound observations."
         }
       }
+    },
+    "mark_conversation_read": {
+      "name": "Mark conversation message read",
+      "description": "Active administrators only. Read exactly one observed incoming message. Accepted means backend acceptance; WhatsApp privacy settings still apply.",
+      "fields": {
+        "config_entry_id": {
+          "name": "WAHA connection",
+          "description": "Loaded integration entry, 1–256 characters."
+        },
+        "conversation_id": {
+          "name": "Conversation",
+          "description": "Existing opaque channel conversation ID, 1–256 characters. Raw addresses are not accepted."
+        },
+        "message_id": {
+          "name": "Incoming message",
+          "description": "Opaque incoming message ID in this conversation, 1–256 characters. Expired, outgoing and legacy quote references are refused."
+        }
+      }
+    },
+    "set_conversation_typing": {
+      "name": "Set conversation typing",
+      "description": "Active administrators only. The caller chooses when typing starts and stops. Typing expires automatically; old activity IDs never clear or revive a replacement.",
+      "fields": {
+        "config_entry_id": {
+          "name": "WAHA connection",
+          "description": "Loaded integration entry, 1–256 characters."
+        },
+        "conversation_id": {
+          "name": "Conversation",
+          "description": "Existing opaque channel conversation ID, 1–256 characters. Raw addresses are not accepted."
+        },
+        "activity_id": {
+          "name": "Activity ID",
+          "description": "One opaque ASCII token per response lifetime, 1–128 characters; starts with a letter or digit and contains letters, digits, dot, underscore, colon or hyphen."
+        },
+        "state": {
+          "name": "State",
+          "description": "typing refreshes the current lease; paused clears only the matching activity."
+        },
+        "ttl_seconds": {
+          "name": "Typing lifetime",
+          "description": "Optional strict integer 3–15 seconds, default 10. Omit for paused requests."
+        }
+      }
     }
   }
 }

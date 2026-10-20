@@ -3,8 +3,11 @@
 Integration **1.7.0** added these backward-compatible schema-v1 interfaces.
 Integration **1.8.0** adds the optional [media contract](MEDIA_API.md), including
 attachment descriptors, authenticated retrieval/staging, and correlated sends.
-Source-level validation is complete; live Home Assistant/WhatsApp verification
-remains required. This integration transports messages and inert command
+The generic [activity contract](ACTIVITY_API.md) adds explicit exact-message
+read receipts and transient typing. It requires a verified, connected GOWS
+2026.9.1 or newer session.
+Source-level validation does not replace live Home Assistant/WhatsApp
+verification. This integration transports messages and inert command
 requests. Consumers own execution policy, authorization, retention, inboxes,
 and retries of their own work. There is no dependency on an agent runtime.
 
@@ -70,6 +73,12 @@ group before reporting group capability:
   "message_changes": false,
   "media_retrieval": false,
   "media_send": false,
+  "activity_contract": {
+    "schema_version": 1,
+    "mark_read": true,
+    "typing": true,
+    "read_scope": "message"
+  },
   "transport_replay": false,
   "manual_outbound_observations": false,
   "observation_health": "ready",
@@ -93,8 +102,13 @@ persistence disables new keyed sends while legacy sends remain independent.
 
 Media flags default to false and gain an effective `media_contract` when the
 runtime has a media manager; see [media discovery and limits](MEDIA_API.md).
-Receipts, edits/deletions, manual-account observations, and event replay remain
-unavailable. An accepted send does not establish delivery or read status.
+Read-receipt and typing flags are reported in `activity_contract` when the
+active GOWS session meets its version requirement; see the
+[activity API](ACTIVITY_API.md).
+Delivery/ack receipt events, edits/deletions, manual-account observations, and
+event replay remain unavailable. The explicit `mark_read` operation does not
+add delivery or receipt events. An accepted send does not establish delivery
+or read status.
 Transcription, historical imports and long-term archives remain consumer work.
 
 ## Outbound observations

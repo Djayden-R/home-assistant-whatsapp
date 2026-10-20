@@ -82,7 +82,9 @@ class _Registry:
     def event_token(self, raw_id: str) -> str:
         return "evt_" + hashlib.sha256(raw_id.encode()).hexdigest()[:16]
 
-    async def async_remember_message(self, raw_id: str, conversation_id: str) -> str:
+    async def async_remember_message(
+        self, raw_id: str, conversation_id: str, **_provenance
+    ) -> str:
         self.messages.add((raw_id, conversation_id))
         return self.message_token(raw_id)
 

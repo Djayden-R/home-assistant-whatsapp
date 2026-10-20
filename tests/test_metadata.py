@@ -36,6 +36,8 @@ def test_service_metadata_matches_actions() -> None:
         "get_channel_capabilities",
         "get_group_membership",
         "get_media",
+        "mark_conversation_read",
+        "set_conversation_typing",
         "list_commands",
         "register_command",
         "send_message",

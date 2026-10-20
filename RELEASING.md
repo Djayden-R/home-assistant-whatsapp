@@ -69,3 +69,37 @@ Consumers own all action semantics and should recover on reconnect and apply
 durable event deduplication. Legacy household action events are unchanged.
 Source publication does not install the integration, reload configuration,
 restart Home Assistant or update consumer agents.
+
+## Read receipts and typing preparation
+
+This source change prepares generic exact-message read receipts and transient
+typing for the HACS integration. The HAOS app and its pinned GOWS 2026.9.1
+engine are unchanged. This remains an unversioned Unreleased preparation; no
+integration or app metadata bump is planned here. Activity capabilities are
+advertised only for a verified, connected supported GOWS session. Unsupported
+activity does not disable ordinary message transport. Review the
+[activity API and fixtures](docs/ACTIVITY_API.md) and run the source validation
+commands above. Complete its manual test checklist on a non-production
+connection before activation. Source checks do not confirm read-receipt
+privacy behavior or phone notification cleanup.
+
+Integration metadata remains 1.9.0 and app metadata remains 0.2.4; choose the
+next integration version before publication. No app release or engine change
+is needed for this feature.
+
+Source validation on 2026-10-20:
+
+- Full Python suite with the existing Home Assistant dependencies: **751
+  passed, no skips**. CI-style environment without Home Assistant: **678 passed,
+  23 skipped** for optional Home Assistant checks.
+- Node suite: **20 passed**. Ruff, Python compilation, matching integration/app
+  version checks, Node syntax, fixture/schema compatibility and whitespace
+  checks passed.
+- Independent **Astra High** review found two P2 issues: first-account binding
+  after startup and guest membership provenance across an awaited lookup. Both
+  were fixed with regressions. Astra High's follow-up ran **98 tests** and found
+  no remaining actionable findings.
+
+These checks used synthetic data and local fake servers. Live read/privacy,
+presence expiry, reconnect and phone notification checks remain outstanding;
+publication and production activation require separate authorization.

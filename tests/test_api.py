@@ -51,6 +51,58 @@ def make_client(session: FakeSession):
     )
 
 
+async def test_activity_uses_exact_read_and_documented_presence_cleanup_payloads():
+    session = FakeSession(*(FakeResponse(200, {}) for _ in range(5)))
+    client = make_client(session)
+    await client.async_mark_seen("19999999999@c.us", "false_19999999999@c.us_EXAMPLE01")
+    await client.async_mark_seen(
+        "123456789@g.us",
+        "false_123456789@g.us_EXAMPLE02_18888888888@c.us",
+        participant="18888888888@c.us",
+    )
+    await client.async_set_presence("19999999999@c.us", "typing")
+    await client.async_set_presence("19999999999@c.us", "paused")
+    await client.async_set_presence(None, "offline")
+    assert session.requests[0]["json"] == {
+        "session": "house",
+        "chatId": "19999999999@c.us",
+        "messageIds": ["false_19999999999@c.us_EXAMPLE01"],
+    }
+    assert session.requests[1]["json"]["participant"] == "18888888888@c.us"
+    assert len(session.requests[1]["json"]["messageIds"]) == 1
+    assert session.requests[2]["json"] == {
+        "presence": "typing",
+        "chatId": "19999999999@c.us",
+    }
+    assert session.requests[3]["json"] == {
+        "presence": "paused",
+        "chatId": "19999999999@c.us",
+    }
+    assert session.requests[4]["json"] == {"presence": "offline"}
+    assert session.requests[4]["url"].endswith("/api/house/presence")
+
+
+@pytest.mark.parametrize("data", [[], "unexpected", 7])
+async def test_activity_malformed_successful_response_retains_uncertainty(data):
+    client = make_client(FakeSession(FakeResponse(200, data)))
+    with pytest.raises(api.WahaResponseError):
+        await client.async_set_presence("19999999999@c.us", "typing")
+
+
+async def test_activity_api_refuses_broad_reads_and_chat_scoped_offline():
+    session = FakeSession()
+    client = make_client(session)
+    for chat, message, participant in (
+        ("19999999999@c.us", "", None),
+        ("123456789@g.us", "example", None),
+    ):
+        with pytest.raises(ValueError, match="exact message|observed participant"):
+            await client.async_mark_seen(chat, message, participant=participant)
+    with pytest.raises(ValueError, match="Invalid activity presence"):
+        await client.async_set_presence("19999999999@c.us", "offline")
+    assert not session.requests
+
+
 @pytest.mark.asyncio
 async def test_get_server() -> None:
     """The account check reads WAHA version metadata with its API key."""
@@ -238,6 +290,7 @@ async def test_ensure_webhook_preserves_unrelated_session_config() -> None:
                         "poll.vote.failed",
                         "message",
                         "message.reaction",
+                        "session.status",
                     ],
                     "hmac": {"key": "hmac-secret"},
                     "retries": {
@@ -256,7 +309,13 @@ async def test_ensure_webhook_is_idempotent() -> None:
     """An already-correct private webhook does not update the WAHA session."""
     desired = {
         "url": "http://homeassistant:8123/api/webhook/private",
-        "events": ["poll.vote", "poll.vote.failed", "message", "message.reaction"],
+        "events": [
+            "poll.vote",
+            "poll.vote.failed",
+            "message",
+            "message.reaction",
+            "session.status",
+        ],
         "hmac": {"key": "hmac-secret"},
         "retries": {"policy": "constant", "delaySeconds": 1, "attempts": 3},
         "customHeaders": None,

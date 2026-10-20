@@ -193,8 +193,8 @@ async def test_config_changes_during_persistence_revoke_publication(
     normalizer, _manager, entry, _client, registry, events = make_inbound()
     original = getattr(registry, storage_operation)
 
-    async def persist_then_revoke(*args):
-        result = await original(*args)
+    async def persist_then_revoke(*args, **kwargs):
+        result = await original(*args, **kwargs)
         if change == "disable":
             entry.subentries["group-contact"].data["enabled"] = False
         elif change == "remove":
