@@ -70,36 +70,46 @@ durable event deduplication. Legacy household action events are unchanged.
 Source publication does not install the integration, reload configuration,
 restart Home Assistant or update consumer agents.
 
-## Read receipts and typing preparation
+## Read receipts and typing 1.10.0
 
-This source change prepares generic exact-message read receipts and transient
-typing for the HACS integration. The HAOS app and its pinned GOWS 2026.9.1
-engine are unchanged. This remains an unversioned Unreleased preparation; no
-integration or app metadata bump is planned here. Activity capabilities are
-advertised only for a verified, connected supported GOWS session. Unsupported
-activity does not disable ordinary message transport. Review the
-[activity API and fixtures](docs/ACTIVITY_API.md) and run the source validation
-commands above. Complete its manual test checklist on a non-production
-connection before activation. Source checks do not confirm read-receipt
-privacy behavior or phone notification cleanup.
+Integration **1.10.0** adds generic exact-message read receipts and transient
+typing through the HACS integration. Version metadata is synchronized in
+`pyproject.toml`, `custom_components/waha_whatsapp/manifest.json`, and the root
+project entry in `uv.lock`. Only the integration changes: HAOS app 0.2.4 and its
+pinned GOWS 2026.9.1 engine stay unchanged, so no app image or app tag is
+required.
 
-Integration metadata remains 1.9.0 and app metadata remains 0.2.4; choose the
-next integration version before publication. No app release or engine change
-is needed for this feature.
+The activity capabilities are advertised only for a verified, connected GOWS
+2026.9.1 or newer session. Unsupported activity leaves ordinary message
+transport available. See the [activity API and fixtures](docs/ACTIVITY_API.md)
+for service schemas, bounds, outcomes, and live checks.
+
+Run the normal validation commands above, including these release tag checks:
+
+```bash
+uv run python scripts/check_version.py v1.10.0
+uv run python scripts/check_version.py waha-v0.2.4
+```
+
+Once the changes are on `main` and CI passes, publish the integration with the
+annotated `v1.10.0` tag using the general procedure above. Do not publish an app
+tag for this change. Publishing the integration does not install it or
+activate a consumer. The manual live checks for WhatsApp read privacy,
+transient presence expiry, reconnect behavior, and phone notification cleanup
+remain outstanding before production activation.
 
 Source validation on 2026-10-20:
 
 - Full Python suite with the existing Home Assistant dependencies: **751
-  passed, no skips**. CI-style environment without Home Assistant: **678 passed,
-  23 skipped** for optional Home Assistant checks.
-- Node suite: **20 passed**. Ruff, Python compilation, matching integration/app
-  version checks, Node syntax, fixture/schema compatibility and whitespace
-  checks passed.
+  passed, no skips**. CI-style environment without Home Assistant: **678
+  passed, 23 skipped** for optional Home Assistant checks.
+- Node suite: **20 passed**. Ruff, Python compilation, version checks, Node
+  syntax, fixture/schema compatibility, and whitespace checks passed.
 - Independent **Astra High** review found two P2 issues: first-account binding
   after startup and guest membership provenance across an awaited lookup. Both
   were fixed with regressions. Astra High's follow-up ran **98 tests** and found
   no remaining actionable findings.
 
-These checks used synthetic data and local fake servers. Live read/privacy,
-presence expiry, reconnect and phone notification checks remain outstanding;
-publication and production activation require separate authorization.
+These checks used synthetic data and local fake servers. They do not verify
+live WhatsApp read/privacy behavior, presence expiry, reconnects, or phone
+notification cleanup.

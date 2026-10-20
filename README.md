@@ -73,9 +73,9 @@ digest-pinned GOWS 2026.9.1 engine. Keep `download_media: false` for per-message
 retrieval. Transcription and
 speech generation belong to external consumers.
 
-The generic [activity API](docs/ACTIVITY_API.md) adds exact-message read
-receipts and transient typing for consumers that explicitly decide when to
-read a message or start and stop composing. It requires a connected GOWS
+Integration 1.10.0 adds the generic [activity API](docs/ACTIVITY_API.md) for
+exact-message read receipts and transient typing. Consumers decide when to
+read a message or start and stop composing. The API requires a connected GOWS
 version 2026.9.1 or newer and leaves ordinary message transport available on
 unsupported backends.
 

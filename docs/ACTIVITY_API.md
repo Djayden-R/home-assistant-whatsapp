@@ -1,5 +1,7 @@
 # Read receipts and typing activity API
 
+Integration **1.10.0** adds this schema-v1 communication API.
+
 This document describes generic schema-v1 read-receipt and transient typing
 transport for configured WhatsApp conversations. The consumer decides when a
 message is considered read and when composing starts or stops. The integration

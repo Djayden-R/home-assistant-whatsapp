@@ -3,9 +3,9 @@
 Integration **1.7.0** added these backward-compatible schema-v1 interfaces.
 Integration **1.8.0** adds the optional [media contract](MEDIA_API.md), including
 attachment descriptors, authenticated retrieval/staging, and correlated sends.
-The generic [activity contract](ACTIVITY_API.md) adds explicit exact-message
-read receipts and transient typing. It requires a verified, connected GOWS
-2026.9.1 or newer session.
+Integration **1.10.0** adds the generic [activity contract](ACTIVITY_API.md)
+for explicit exact-message read receipts and transient typing. It requires a
+verified, connected GOWS 2026.9.1 or newer session.
 Source-level validation does not replace live Home Assistant/WhatsApp
 verification. This integration transports messages and inert command
 requests. Consumers own execution policy, authorization, retention, inboxes,

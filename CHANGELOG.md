@@ -5,6 +5,8 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-20
+
 ### Added
 
 - Add generic `mark_conversation_read` and `set_conversation_typing` services
@@ -20,6 +22,8 @@ All notable changes are documented here. This project follows
   Activity transport requires GOWS 2026.9.1 or newer; unsupported activity
   leaves ordinary message transport available. Live phone behavior remains to
   be verified before activation.
+- App 0.2.4 and its pinned GOWS 2026.9.1 engine are unchanged; no app release
+  is needed. Publication does not install or activate the integration.
 
 ## [1.9.0] - 2026-10-19
 
@@ -365,3 +369,4 @@ automatic download defaults. Live HA/WhatsApp verification remains required.
 [1.6.0]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.6.0
 
 [1.9.0]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.9.0
+[1.10.0]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.10.0
