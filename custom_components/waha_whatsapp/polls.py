@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import math
+import re
 import time
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
@@ -162,6 +163,12 @@ class PendingPoll:
             return None
         if commit_at is not None and not isinstance(commit_at, int | float):
             return None
+
+        # Application polls before 1.10.1 stored the configured bare recipient
+        # instead of the chat ID sent by the transport. Repair only this known
+        # persisted form; votes themselves must always supply a proven chat ID.
+        if origin == "application" and re.fullmatch(r"[0-9]{7,15}", chat_id):
+            chat_id = f"{chat_id}@c.us"
 
         return cls(
             message_id=canonical_message_id(message_id),
@@ -515,8 +522,26 @@ class PollRegistry:
 
 
 def _same_chat_id(left: str, right: str) -> bool:
-    """Compare WAHA chat IDs case-insensitively without exposing them."""
-    return left.casefold() == right.casefold()
+    """Compare exact direct PN identities, keeping voter authorization separate.
+
+    WAHA documents both PN domains and numeric device suffixes for one account.
+    LIDs are deliberately excluded: only the manager's verified WAHA lookup may
+    turn those into a PN identity. Bare vote addresses and groups fail closed.
+    """
+    canonical_left = _direct_phone_chat_id(left)
+    return canonical_left is not None and canonical_left == _direct_phone_chat_id(right)
+
+
+def _direct_phone_chat_id(value: str) -> str | None:
+    """Canonicalize only supported, bounded direct phone JIDs without guessing."""
+    if not isinstance(value, str) or len(value) > 256:
+        return None
+    match = re.fullmatch(
+        r"([0-9]{7,15})(?::[0-9]+)?@(?:c\.us|s\.whatsapp\.net)",
+        value,
+        re.IGNORECASE | re.ASCII,
+    )
+    return f"{match[1]}@c.us" if match is not None else None
 
 
 def canonical_message_id(message_id: str) -> str:

@@ -70,6 +70,53 @@ durable event deduplication. Legacy household action events are unchanged.
 Source publication does not install the integration, reload configuration,
 restart Home Assistant or update consumer agents.
 
+## Application poll compatibility 1.10.1
+
+Integration **1.10.1** fixes application-owned poll destination binding by
+recording the normalized destination used by the transport and strictly
+canonicalizing supported phone-number JIDs. The poll destination and voter are checked
+independently; alternate LIDs remain dependent on WAHA's verified mapping.
+During restore, affected pending application polls from the earlier
+implementation have only their destination binding repaired. The vote
+journal, settling state, timestamps, origin, actions, schema, replay data, and
+opaque identities are preserved. A vote rejected before journaling is not
+recreated; a fresh genuine vote or supported text/voice response is needed.
+Legacy automation-owned poll handling and the consumer API are unchanged.
+
+Only the HACS integration changes. `pyproject.toml`, the integration manifest,
+and the root package in `uv.lock` must all report **1.10.1**. HAOS app 0.2.4
+and its pinned GOWS 2026.9.1 engine remain unchanged, so no app image or app
+tag is required. Run the normal validation above and verify the matching tag
+metadata:
+
+```bash
+uv run python scripts/check_version.py v1.10.1
+uv run python scripts/check_version.py waha-v0.2.4
+uv lock --check
+```
+
+After integration changes are on `main` and CI passes, publish the annotated
+`v1.10.1` integration tag using the general procedure above. Publication does
+not install the integration, replay rejected votes, reload configuration, or
+activate a consumer. Source and synthetic checks do not establish live
+WhatsApp behavior; verify poll votes on a test connection before production
+activation.
+
+Source validation on 2026-10-21:
+
+- Full Python suite with Home Assistant dependencies: **782 passed, no skips**.
+  CI-style environment: **709 passed, 23 optional Home Assistant skips**.
+- Node suite: **20 passed**. Ruff, Python compilation, version/tag consistency,
+  lockfile consistency, Node syntax and whitespace checks passed.
+- Added **31 synthetic regressions**, including production send, registration,
+  signed webhook dispatch, settling timers, persisted-record repair, original
+  vote timestamps, journal bounds, duplicate suppression and restart/replay.
+  The send roundtrip and persisted-repair regressions fail against the original
+  implementation.
+- Independent **Astra High** review found no remaining actionable findings.
+  Source tests do not establish that the particular live incident is resolved;
+  one genuine vote and its consumer continuation still need live verification.
+
 ## Read receipts and typing 1.10.0
 
 Integration **1.10.0** adds generic exact-message read receipts and transient

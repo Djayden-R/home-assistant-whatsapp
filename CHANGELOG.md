@@ -5,6 +5,31 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-10-21
+
+### Fixed
+
+- Bind application-owned poll registrations to the normalized direct-chat
+  destination used by the transport. Compare supported phone-number JIDs through
+  strict canonicalization for the poll destination and voter independently;
+  retain WAHA's verified LID
+  mapping and reject guessed LIDs, bare vote identities, and group fallbacks.
+- Repair affected persisted pending application polls during state
+  restore by canonicalizing the legacy bare-number destination. The repair
+  changes only that pending destination field and preserves the vote journal,
+  settling state, timestamps, origin, actions, schema, replay data, and opaque
+  identities.
+- Keep legacy automation-owned poll behavior unchanged. Previously rejected
+  votes were never journaled and are not recreated; wait for a fresh genuine
+  vote or use a supported text/voice response. Do not edit stored data or
+  synthesize human-origin events.
+
+### Compatibility
+
+- This is an integration-only poll transport fix; app 0.2.4 and its pinned GOWS
+  2026.9.1 engine are unchanged. The consumer API and poll event schema do not
+  change. Source validation does not establish live WhatsApp behavior.
+
 ## [1.10.0] - 2026-10-20
 
 ### Added
@@ -370,3 +395,4 @@ automatic download defaults. Live HA/WhatsApp verification remains required.
 
 [1.9.0]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.9.0
 [1.10.0]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.10.0
+[1.10.1]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.10.1

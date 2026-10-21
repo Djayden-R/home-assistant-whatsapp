@@ -112,7 +112,7 @@ async def async_send_poll_to_conversation(
             )
             await runtime.poll_manager.async_register_poll(
                 result.id,
-                contact.recipient,
+                result.chat_id,
                 options,
                 settle_seconds,
                 contact.person_entity_id,

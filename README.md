@@ -79,6 +79,10 @@ read a message or start and stop composing. The API requires a connected GOWS
 version 2026.9.1 or newer and leaves ordinary message transport available on
 unsupported backends.
 
+Integration 1.10.1 fixes application-owned poll destination binding and
+compatibility for pending polls saved by the earlier implementation. It does
+not change the consumer API or poll event schema.
+
 ## Requirements
 
 - Home Assistant 2026.7 or newer.
@@ -577,3 +581,15 @@ Consumers should recover on connection/reconnection, deduplicate event IDs
 durably, use the original vote time, and recheck their own grants. They own all
 reminder/task/health semantics; this integration contains none of those rules.
 Capabilities `application_polls` and `poll_selection_replay` advertise support.
+
+In 1.10.1, new application polls bind to the normalized destination used by
+the transport. Poll destinations and voters are checked independently using
+strict canonicalization of supported direct phone-number JIDs. Alternate LIDs are
+accepted only through WAHA's verified mapping; bare vote identities and group
+fallbacks are not guessed. On state restore, affected pending
+application polls from the earlier implementation have their destination
+binding repaired while their journal, settling data, timestamps, origin,
+actions, replay data, schema, and opaque identities are preserved. A vote
+rejected before it was journaled is not recreated. Wait for a fresh genuine
+vote or use a supported text/voice response; do not edit stored data or
+synthesize human-origin events. Legacy automation-owned polls are unchanged.
