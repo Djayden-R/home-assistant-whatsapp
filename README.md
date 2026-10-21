@@ -593,3 +593,10 @@ actions, replay data, schema, and opaque identities are preserved. A vote
 rejected before it was journaled is not recreated. Wait for a fresh genuine
 vote or use a supported text/voice response; do not edit stored data or
 synthesize human-origin events. Legacy automation-owned polls are unchanged.
+
+The current unreleased source also normalizes poll vote time before settlement.
+The pinned GOWS webhook uses Unix milliseconds, while existing seconds-style
+examples remain accepted for compatibility. See the
+[poll timestamp and recovery note](docs/POLL_SELECTION_RECOVERY.md) for the
+synthetic fixture, persisted-state boundaries, diagnostics and the outstanding
+live verification plan. Source checks do not prove live WhatsApp behavior.

@@ -1,7 +1,6 @@
 """Settled poll selections use the channel event without changing legacy actions."""
 
 import sys
-from collections import Counter
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -53,6 +52,9 @@ class _Store:
 
     async def async_save(self, data) -> None:
         self.saved.append(data)
+
+    async def async_load(self):
+        return self.saved[-1] if self.saved else None
 
 
 class _Loop:
@@ -108,6 +110,7 @@ class _ChannelRegistry:
 def _manager(*, person_entity_id=None, conversation_id="direct_opaque"):
     bus = _Bus()
     hass = SimpleNamespace(
+        data={},
         bus=bus,
         loop=_Loop(),
         states=SimpleNamespace(
@@ -119,16 +122,17 @@ def _manager(*, person_entity_id=None, conversation_id="direct_opaque"):
         ),
         auth=_Auth(),
     )
-    manager = object.__new__(manager_module.WahaPollManager)
-    manager._hass = hass
-    manager._entry = SimpleNamespace(entry_id="entry_opaque")
-    manager._channel_registry = _ChannelRegistry(person_entity_id)
-    manager._registry = polls.PollRegistry()
-    manager._store = _Store()
-    manager._timers = {}
-    manager._rejected_vote_counts = Counter()
-    manager._session_name = "default"
-    manager._client = SimpleNamespace()
+    manager = manager_module.WahaPollManager(
+        hass,
+        SimpleNamespace(entry_id="entry_opaque"),
+        SimpleNamespace(session_name="default"),
+        "synthetic-signing-key",
+        _ChannelRegistry(person_entity_id),
+        store=_Store(),
+    )
+    # This synchronous unit fixture represents an initialized active runtime;
+    # end-to-end fixtures additionally exercise async_start's actual store load.
+    manager._writer_slot.owner = manager
     options = polls.build_poll_options(
         [{"action": "TEST_WAHA_V14", "title": "Confirm test"}], "No action"
     )

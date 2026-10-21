@@ -5,6 +5,35 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Normalize supported GOWS poll vote timestamps from Unix milliseconds while
+  retaining the seconds-style values in existing WAHA examples. Newly saved
+  pending votes use canonical Unix seconds with an explicit unit marker; see
+  the [poll timestamp and recovery note](docs/POLL_SELECTION_RECOVERY.md).
+- Recover persisted poll settlements after bounded local construction or
+  storage retries, and preserve saved selections for the existing replay action
+  when best-effort event-bus publication is missed. Retained recovery records
+  remain bounded after retry exhaustion; aggregate diagnostics distinguish
+  retained recovery state from active scheduled work.
+
+### Validation
+
+- The focused HA poll/channel regression run passed 161 tests. The full suite
+  passed **842 tests** with Home Assistant dependencies and **764 tests, 28
+  optional HA skips** in the plain CI-style environment; the Node suite passed
+  **20 tests**. Ruff, version consistency, Python compilation, offline lock
+  consistency, Node syntax, fixture/documentation checks, and whitespace checks
+  passed. The only warnings were existing aiohttp test/runtime warnings.
+- Independent Astra High A/D and B/C follow-ups ended with no remaining
+  actionable findings. Follow-up fixes covered cancellation-safe legacy action
+  publication, unload-time poll registration, equivalent-unit fractional
+  timestamp rounding, and precise provider-source attribution.
+- Synthetic tests and local checks do not establish live WhatsApp behavior.
+  Hosted HACS, hassfest, and add-on lint were not run; no hosted workflow was
+  triggered. See the [recovery note](docs/POLL_SELECTION_RECOVERY.md) for the
+  baseline comparison, exact commands, and outstanding live checks.
+
 ## [1.10.1] - 2026-10-21
 
 ### Fixed

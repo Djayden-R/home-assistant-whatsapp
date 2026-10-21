@@ -38,6 +38,7 @@ async def async_get_config_entry_diagnostics(
                 entry.runtime_data.poll_manager.rejected_vote_reasons
             ),
             "webhook_configured": True,
+            "settlement": entry.runtime_data.poll_manager.diagnostics,
         },
         "inbound_channel": {
             "accepted": entry.runtime_data.inbound_manager.accepted_count,

@@ -10,8 +10,61 @@ import time
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from decimal import ROUND_HALF_EVEN, Decimal
 from enum import StrEnum
 from typing import Any
+
+MAX_TIMESTAMP_SECONDS = math.nextafter(253402300800.0, 0.0)
+MAX_TIMESTAMP_MILLISECONDS = MAX_TIMESTAMP_SECONDS * 1000
+
+
+def normalize_vote_timestamp(value: Any, *, unit: str | None = None) -> float | None:
+    """Return microsecond-precision UTC seconds from supported numeric epochs.
+
+    Unmarked values in Python's representable seconds range retain the legacy
+    seconds interpretation. Larger values, through the corresponding millisecond
+    ceiling, are milliseconds (including GOWS/NOWEB senderTimestampMS). Earlier
+    ambiguous millisecond values cannot be distinguished from legacy seconds.
+    Persisted marked seconds never undergo unit inference again.
+
+    Both numeric units first share one binary float-seconds representation.
+    Round that decoded value to microseconds, ties to even; converting each
+    input separately through decimal strings can invent different half-ties.
+    """
+    if type(value) not in (int, float) or unit not in (None, "seconds"):
+        return None
+    try:
+        numeric = float(value)
+    except OverflowError, ValueError:
+        return None
+    if not math.isfinite(numeric) or numeric < 0:
+        return None
+    if unit == "seconds" and numeric > MAX_TIMESTAMP_SECONDS:
+        return None
+    divisor = 1
+    if unit is None and numeric > MAX_TIMESTAMP_SECONDS:
+        if numeric > MAX_TIMESTAMP_MILLISECONDS:
+            return None
+        divisor = 1000
+    seconds = numeric / divisor
+    seconds = float(
+        Decimal.from_float(seconds).quantize(
+            Decimal("0.000001"), rounding=ROUND_HALF_EVEN
+        )
+    )
+    if not 0 <= seconds <= MAX_TIMESTAMP_SECONDS:
+        return None
+    try:
+        datetime.fromtimestamp(seconds, UTC)
+    except OverflowError, OSError, ValueError:
+        return None
+    return seconds
+
+
+def valid_settle_timestamp(value: Any) -> bool:
+    """Settlement deadlines are finite seconds, never provider milliseconds."""
+    return normalize_vote_timestamp(value, unit="seconds") is not None
 
 
 class PollValidationError(ValueError):
@@ -25,6 +78,7 @@ class PollVoteRejectionReason(StrEnum):
     MALFORMED_PAYLOAD = "malformed_payload"
     INVALID_DIRECTION = "invalid_direction"
     INVALID_FIELDS = "invalid_fields"
+    INVALID_TIMESTAMP = "invalid_timestamp"
     MULTIPLE_SELECTIONS = "multiple_selections"
     UNKNOWN_POLL = "unknown_poll"
     LID_RESOLUTION_FAILED = "lid_resolution_failed"
@@ -77,6 +131,7 @@ class PendingPoll:
     latest_vote_timestamp: float | None = None
     selected_title: str | None = None
     commit_at: float | None = None
+    invalid_timestamp: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         """Return JSON-serializable persistent state."""
@@ -93,6 +148,8 @@ class PendingPoll:
             "latest_vote_timestamp": self.latest_vote_timestamp,
             "selected_title": self.selected_title,
             "commit_at": self.commit_at,
+            "timestamp_unit": "seconds",
+            **({"invalid_timestamp": True} if self.invalid_timestamp else {}),
         }
 
     @classmethod
@@ -153,16 +210,33 @@ class PendingPoll:
         latest_timestamp = data.get("latest_vote_timestamp")
         selected_title = data.get("selected_title")
         commit_at = data.get("commit_at")
-        if latest_timestamp is not None and not isinstance(
-            latest_timestamp, int | float
+        normalized = (
+            normalize_vote_timestamp(latest_timestamp, unit=data.get("timestamp_unit"))
+            if latest_timestamp is not None
+            else None
+        )
+        invalid_timestamp = data.get("invalid_timestamp") is True
+        if (
+            (latest_timestamp is not None and normalized is None)
+            or (commit_at is not None and not valid_settle_timestamp(commit_at))
+            or (
+                commit_at is not None and (normalized is None or selected_title is None)
+            )
+            or (
+                selected_title is not None
+                and (
+                    not isinstance(selected_title, str)
+                    or selected_title not in options
+                    or normalized is None
+                    or commit_at is None
+                )
+            )
         ):
-            return None
-        if selected_title is not None and (
-            not isinstance(selected_title, str) or selected_title not in options
-        ):
-            return None
-        if commit_at is not None and not isinstance(commit_at, int | float):
-            return None
+            # Retain the registered poll and choices. Only unsafe selected-vote
+            # metadata is quarantined, so a genuine fresh vote remains usable.
+            normalized = selected_title = commit_at = None
+            invalid_timestamp = True
+        latest_timestamp = normalized
 
         # Application polls before 1.10.1 stored the configured bare recipient
         # instead of the chat ID sent by the transport. Repair only this known
@@ -185,6 +259,7 @@ class PendingPoll:
             ),
             selected_title=selected_title,
             commit_at=float(commit_at) if commit_at is not None else None,
+            invalid_timestamp=invalid_timestamp,
         )
 
 
@@ -265,10 +340,12 @@ def parse_poll_vote_with_reason(
         or not sender
         or not isinstance(poll_chat_id, str)
         or not poll_chat_id
-        or not isinstance(timestamp, int | float)
         or not isinstance(selected_options, list)
     ):
         return None, PollVoteRejectionReason.INVALID_FIELDS
+    timestamp = normalize_vote_timestamp(timestamp)
+    if timestamp is None:
+        return None, PollVoteRejectionReason.INVALID_TIMESTAMP
     if len(selected_options) > 1:
         return None, PollVoteRejectionReason.MULTIPLE_SELECTIONS
 
@@ -298,6 +375,7 @@ class PollRegistry:
         self._polls: dict[str, PendingPoll] = {}
         self._selections: list[dict[str, Any]] = []
         self._selection_sequence = 0
+        self.invalid_pending_records = 0
 
     def register(
         self,
@@ -353,9 +431,16 @@ class PollRegistry:
             return PollVoteRejectionReason.POLL_CHAT_MISMATCH
         if not _same_chat_id(vote.sender, pending.chat_id):
             return PollVoteRejectionReason.SENDER_IDENTITY_MISMATCH
+        timestamp = normalize_vote_timestamp(vote.timestamp)
+        if (
+            timestamp is None
+            or not valid_settle_timestamp(received_at)
+            or not valid_settle_timestamp(received_at + pending.settle_seconds)
+        ):
+            return PollVoteRejectionReason.INVALID_TIMESTAMP
         if (
             pending.latest_vote_timestamp is not None
-            and vote.timestamp <= pending.latest_vote_timestamp
+            and timestamp <= pending.latest_vote_timestamp
         ):
             return PollVoteRejectionReason.STALE_VOTE
         if (
@@ -364,7 +449,8 @@ class PollRegistry:
         ):
             return PollVoteRejectionReason.UNKNOWN_OPTION
 
-        pending.latest_vote_timestamp = vote.timestamp
+        pending.latest_vote_timestamp = timestamp
+        pending.invalid_timestamp = False
         pending.selected_title = vote.selected_title
         pending.commit_at = (
             received_at + pending.settle_seconds
@@ -462,14 +548,18 @@ class PollRegistry:
         self._polls.clear()
         self._selections.clear()
         self._selection_sequence = 0
+        self.invalid_pending_records = 0
         if not isinstance(data, Mapping) or not isinstance(data.get("polls"), list):
             return
         for raw_pending in data["polls"]:
             if not isinstance(raw_pending, Mapping):
+                self.invalid_pending_records += 1
                 continue
             pending = PendingPoll.from_dict(raw_pending)
             if pending is not None:
                 self._polls[pending.message_id] = pending
+            else:
+                self.invalid_pending_records += 1
         sequence = data.get("selection_sequence", 0)
         if type(sequence) is int and sequence >= 0:
             self._selection_sequence = sequence

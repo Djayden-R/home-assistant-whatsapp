@@ -112,8 +112,9 @@ async def test_failed_selection_write_never_publishes_and_keeps_pending_vote():
         raise OSError("synthetic disk failure")
 
     manager._store.async_save = unavailable
-    with pytest.raises(OSError, match="synthetic disk failure"):
-        await manager._async_commit(POLL_ID, 123.0)
+    await manager._async_commit(POLL_ID, 123.0)
     assert not bus.events
     assert manager._registry.pending(POLL_ID) is pending
     assert not manager.selections("direct_opaque")["events"]
+    assert manager.diagnostics["persistence_failures"] == 1
+    assert manager.diagnostics["recovery_pending"] == 1

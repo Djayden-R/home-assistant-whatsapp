@@ -252,6 +252,30 @@ and credentials are excluded from keyed responses. Legacy unkeyed exceptions
 retain their existing Home Assistant behavior. The legacy response contains
 only `conversation_id` and, when tracked, `message_id`.
 
+## Application poll selections
+
+Application poll events use the existing schema-v1 `poll.selection_settled`
+contract. The event's `vote_occurred_at` is the original vote time;
+`occurred_at` is when settlement is published. The selected option label is
+omitted for application polls, and the event carries the opaque action ID and
+selection sequence. Consumers should recover through `get_poll_selections`
+and durably deduplicate by event identity and sequence. Home Assistant event
+bus delivery remains best effort.
+
+For `poll.vote.vote.timestamp`, WAHA GOWS 2026.9.1 passes the protocol
+`senderTimestampMS` field through unchanged as Unix milliseconds. The
+integration normalizes valid timestamps to canonical Unix seconds and marks
+new pending timestamps with unit `seconds`. Older seconds-style WAHA examples
+remain compatible. A persisted `seconds` marker is authoritative. For an
+unmarked value within the representable Unix-seconds range, seconds retain
+their legacy meaning; a larger value is interpreted as milliseconds only when
+dividing by 1,000 produces a representable UTC date. Ambiguous early-epoch
+values retain the legacy seconds interpretation, so this does not claim
+universal timestamp semantics for every WAHA engine. Published journal entries
+are not rewritten. See the [poll timestamp and recovery
+note](POLL_SELECTION_RECOVERY.md) for engine references, synthetic examples,
+bounded recovery behavior and pending validation.
+
 ## Explicit general groups
 
 Use **Add WhatsApp group** on the integration to enter the exact group JID

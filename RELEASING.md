@@ -117,6 +117,92 @@ Source validation on 2026-10-21:
   Source tests do not establish that the particular live incident is resolved;
   one genuine vote and its consumer continuation still need live verification.
 
+## Poll timestamp compatibility and settlement recovery (unreleased)
+
+The current source work addresses the pinned GOWS 2026.9.1 poll vote
+timestamp: WAHA passes protocol `senderTimestampMS` into numeric
+`poll.vote.vote.timestamp` unchanged. The previous public settlement path
+treated this value as seconds and failed while constructing its UTC event time.
+The compatibility rule preserves seconds-style documented inputs, normalizes
+supported millisecond values to canonical seconds, and marks newly persisted
+pending vote timestamps with their unit. Both recognized numeric forms use a
+shared decoded binary-float seconds value, rounded to microseconds with
+`Decimal.from_float` and ties-to-even. Published journals remain unchanged;
+ambiguous early-epoch millisecond values retain the legacy seconds
+interpretation. Other engine timestamp units are not generalized; see the
+[poll timestamp/recovery note](docs/POLL_SELECTION_RECOVERY.md).
+
+The issue was reproduced before the fix by running the synthetic public
+settlement journey against the original `polls.py` and `poll_manager.py` from
+commit `3cbc713`. From the repository root, this command initializes the
+existing isolated test modules, substitutes those two baseline source files in
+memory, and runs only the millisecond public journey. It does not check out,
+write, or modify the baseline commit:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.ha-runtime/lib/python3.14/site-packages .venv/bin/python - <<'PY'
+import importlib, subprocess, pytest
+importlib.import_module('tests.test_poll_settlement')
+from tests._loader import load_integration_module
+for name in ('polls', 'poll_manager'):
+    source = subprocess.check_output(['git', 'show', f'3cbc713:custom_components/waha_whatsapp/{name}.py'], text=True)
+    module = load_integration_module(name)
+    exec(compile(source, f'baseline_3cbc713_{name}.py', 'exec'), module.__dict__)
+raise SystemExit(pytest.main(['-q', '-p', 'no:cacheprovider', 'tests/test_poll_settlement.py::test_gows_millisecond_vote_real_public_journey_survives_timer_and_restart[milliseconds]', '--tb=short']))
+PY
+```
+
+On the baseline this reaches the settlement timer and fails with
+`ValueError: year 61975 is out of range` in `datetime.fromtimestamp`; it fails
+before publishing the settled event. The same regression against the current
+source passes:
+
+```bash
+PYTHONPATH=.ha-runtime/lib/python3.14/site-packages .venv/bin/pytest -q -p no:cacheprovider 'tests/test_poll_settlement.py::test_gows_millisecond_vote_real_public_journey_survives_timer_and_restart[milliseconds]' --tb=short
+```
+
+Validation on 2026-10-21: the author’s focused HA poll/channel run passed 161
+tests; the full HA-runtime suite passed **842**, the plain CI-style suite passed
+**764 with 28 optional Home Assistant skips**, and Node passed **20**. Ruff,
+version consistency (integration `1.10.1`, app `0.2.4`), Python compilation,
+offline lock consistency, Node syntax, synthetic JSON and local documentation
+links, and `git diff --check` passed. The plain suite showed an existing
+aiohttp `NotAppKeyWarning`; the HA-runtime suite also showed an aiohttp
+application-inheritance deprecation warning. An initial sandboxed run had 27
+loopback socket permission failures; the authorized local rerun passed.
+
+The final tracked diff and three new text files passed a targeted six-pattern
+credential scan (private keys, AWS, GitHub, OpenAI, Slack, and credential-bearing
+URLs), with zero matches. Manual privacy review found only synthetic example
+identities. No dedicated secret-scanner executable was installed locally.
+
+Independent Astra High A/D and B/C follow-ups ended clean with no remaining
+actionable findings. A/D independently exercised 161 focused HA tests and
+30,000 numeric inputs; B/C exercised a 60-case settlement follow-up. The
+review identified and the source fixed: a legacy action lost after an
+acknowledged cancellation, a registration race during unload, a one-microsecond
+rounding mismatch between equivalent seconds and milliseconds, and overly
+strong wording about the exact pinned provider implementation. These review
+checks are not live-service verification.
+
+HACS, hassfest, and add-on linter were not run because they are not available
+locally; no hosted workflow was triggered. No live HA/WhatsApp check has been
+performed. Exact pinned private GOWS dependency behavior and precision, a live
+webhook payload, other engines' timestamp units, and live selection/replay
+behavior remain unverified. No version metadata was changed as part of this
+unreleased source work.
+
+After separately authorized activation of the patched release and confirmation
+that the patched code is loaded (the manifest version alone cannot distinguish
+this unreleased source revision), first query selection replay for the same
+conversation from the consumer's last durable sequence. If the original vote
+is present, continue that same pending request and question with its saved
+event identity and vote time, and check for duplicate effects. If no recoverable
+original vote exists, use a fresh genuine vote on the still-supported poll or
+a supported genuine text/voice answer. Do not reset or replace the consumer
+request as a permanent recovery path, and do not replay or synthesize a
+previously rejected vote. No live check has been performed.
+
 ## Read receipts and typing 1.10.0
 
 Integration **1.10.0** adds generic exact-message read receipts and transient

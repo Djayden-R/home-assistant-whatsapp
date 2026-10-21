@@ -27,7 +27,7 @@ class Clock:
     """Run the real poll manager's scheduled callbacks without wall-clock waits."""
 
     def __init__(self):
-        self.now = 2_000_000_000.0
+        self.now = datetime(2030, 1, 2, 10, tzinfo=UTC).timestamp()
         self.timers = []
         self.tasks = []
 
@@ -59,9 +59,10 @@ async def environment(monkeypatch):
     """Only HTTP/framework storage boundaries are fake; poll code is production."""
     env = await _setup(monkeypatch, observations=False)
     env.entry.subentries["contact"].data = {"recipient": PHONE.partition("@")[0]}
+    env.entry.data["webhook_secret"] = SIGNING_KEY
+    env.registry._secret = SIGNING_KEY.encode()
     contact = env.registry._contact(env.entry.subentries["contact"])
     env.direct = contact.conversation_id
-    env.entry.data["webhook_secret"] = SIGNING_KEY
     env.clock = Clock()
     env.hass.loop = env.clock
     env.hass.bus.async_fire = lambda event, payload, **_kw: env.hass.bus.events.append(
@@ -69,6 +70,13 @@ async def environment(monkeypatch):
     )
     env.entry.async_create_task = env.clock.create_task
     monkeypatch.setattr(manager_module.time, "time", lambda: env.clock.now)
+
+    class ClockDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fromtimestamp(env.clock.now, tz)
+
+    monkeypatch.setattr(manager_module, "datetime", ClockDateTime)
     monkeypatch.setattr(manager_module, "DurableStore", lambda *_a, **_kw: Store())
     env.manager = manager_module.WahaPollManager(
         env.hass, env.entry, env.client, SIGNING_KEY, env.registry
@@ -437,6 +445,7 @@ def test_only_known_application_bare_destination_is_repaired_on_restore():
         "message_id": "SYNTHETIC",
         "chat_id": PHONE,
         "person_entity_id": None,
+        "timestamp_unit": "seconds",
     }
     for malformed in (
         "+19999999999",

@@ -179,6 +179,7 @@ async def _setup(monkeypatch, *, group=False, observations=True):
     await dedup.async_start()
     observer = outbound.OutboundObserver(hass, entry, registry)
     entry.runtime_data = SimpleNamespace(
+        poll_manager=SimpleNamespace(async_stop=AsyncMock()),
         channel_registry=registry,
         correlated_sends=dedup,
         general_groups=general_groups,

@@ -1,0 +1,75 @@
+{
+  "fixture": "synthetic poll timestamp compatibility",
+  "schema_version": 1,
+  "source_event": {
+    "event": "poll.vote",
+    "engine": "GOWS",
+    "session": "session_example",
+    "payload": {
+      "vote": {
+        "id": "vote_example",
+        "from": "15555550123@c.us",
+        "fromMe": false,
+        "selectedOptions": ["Confirm"],
+        "timestamp": 1893578400000
+      },
+      "poll": {
+        "id": "poll_example",
+        "fromMe": true,
+        "to": "15555550123@c.us"
+      }
+    }
+  },
+  "normalized_vote": {
+    "timestamp_unit": "seconds",
+    "vote_occurred_at": "2030-01-02T10:00:00+00:00"
+  },
+  "settled_event": {
+    "schema_version": 1,
+    "event_id": "evt_poll_example",
+    "type": "poll.selection_settled",
+    "config_entry_id": "entry_example",
+    "conversation_id": "direct_example",
+    "conversation_type": "direct",
+    "occurred_at": "2030-01-02T10:00:02+00:00",
+    "sender": {
+      "contact_id": "contact_example"
+    },
+    "poll": {
+      "message_id": "message_example",
+      "selected_option": null,
+      "action_id": "action_example"
+    },
+    "origin": "application",
+    "client_request_id": "request_example",
+    "vote_occurred_at": "2030-01-02T10:00:00+00:00",
+    "selection_sequence": 1
+  },
+  "seconds_compatibility": {
+    "input_timestamp": 1692861427,
+    "vote_occurred_at": "2023-08-24T07:17:07+00:00"
+  },
+  "synthetic_aggregate_diagnostics": {
+    "actionable_polls": {
+      "pending": 1,
+      "failed_votes": 0,
+      "rejected_votes": 0,
+      "rejection_reasons": {},
+      "webhook_configured": true,
+      "settlement": {
+        "construction_failures": 1,
+        "persistence_failures": 0,
+        "publication_failures": 0,
+        "retry_exhausted": 0,
+        "recovery_pending": 1,
+        "scheduled_work": 1,
+        "invalid_pending_timestamps": 0,
+        "invalid_pending_records": 0
+      }
+    }
+  },
+  "synthetic_log_categories": {
+    "settlement_failure": "WAHA poll settlement construction failed",
+    "rejected_vote": "Rejected authenticated WAHA poll vote (invalid_timestamp); no Home Assistant action was fired"
+  }
+}

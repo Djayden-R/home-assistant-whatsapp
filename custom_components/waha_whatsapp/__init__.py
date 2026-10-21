@@ -679,6 +679,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: WahaConfigEntry) -> boo
         # A replacement runtime must not read or overwrite this ledger until
         # every admitted send has persisted its final or uncertain outcome.
         await entry.runtime_data.correlated_sends.async_stop()
+        # Admitted application sends may still register an accepted poll after
+        # WAHA returns. Keep poll registration alive until those sends drain.
+        await entry.runtime_data.poll_manager.async_stop()
         if manager := getattr(entry.runtime_data, "media_manager", None):
             await manager.async_stop()
         entry.runtime_data.channel_registry.stop()
