@@ -5,6 +5,8 @@ All notable changes are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.10.2] - 2026-10-22
+
 ### Fixed
 
 - Normalize supported GOWS poll vote timestamps from Unix milliseconds while
@@ -22,17 +24,31 @@ All notable changes are documented here. This project follows
 - The focused HA poll/channel regression run passed 161 tests. The full suite
   passed **842 tests** with Home Assistant dependencies and **764 tests, 28
   optional HA skips** in the plain CI-style environment; the Node suite passed
-  **20 tests**. Ruff, version consistency, Python compilation, offline lock
-  consistency, Node syntax, fixture/documentation checks, and whitespace checks
-  passed. The only warnings were existing aiohttp test/runtime warnings.
+  **20 tests**. These core checks ran on 2026-10-21 with integration metadata
+  at 1.10.1. Ruff, Python compilation, Node syntax, fixture/documentation
+  checks, and whitespace checks passed; the only warnings were existing
+  aiohttp test/runtime warnings. After the metadata bump, both release version
+  checks and the offline lock check passed for 1.10.2 / app 0.2.4.
 - Independent Astra High A/D and B/C follow-ups ended with no remaining
   actionable findings. Follow-up fixes covered cancellation-safe legacy action
   publication, unload-time poll registration, equivalent-unit fractional
   timestamp rounding, and precise provider-source attribution.
 - Synthetic tests and local checks do not establish live WhatsApp behavior.
-  Hosted HACS, hassfest, and add-on lint were not run; no hosted workflow was
-  triggered. See the [recovery note](docs/POLL_SELECTION_RECOVERY.md) for the
-  baseline comparison, exact commands, and outstanding live checks.
+  As of the 2026-10-21 source-only validation, hosted HACS, hassfest, and
+  add-on lint had not run. Release publication requires fresh main CI to pass;
+  results for that run will be recorded only after they are observed. See the
+  [recovery note](docs/POLL_SELECTION_RECOVERY.md) for the baseline comparison,
+  exact commands, and outstanding live checks.
+
+### Compatibility
+
+- This integration-only release preserves the poll service and event schema,
+  independent poll destination/voter authorization, legacy automation poll
+  behavior, and existing published selection journals. The HAOS app remains
+  at 0.2.4 with the same pinned GOWS 2026.9.1 engine; no app image update is
+  required. Installing the integration does not activate a consumer or prove
+  live WhatsApp behavior. Verify the same pending request using replay after
+  separately authorized activation.
 
 ## [1.10.1] - 2026-10-21
 
@@ -425,3 +441,4 @@ automatic download defaults. Live HA/WhatsApp verification remains required.
 [1.9.0]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.9.0
 [1.10.0]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.10.0
 [1.10.1]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.10.1
+[1.10.2]: https://github.com/sebastian-greco/home-assistant-whatsapp/releases/tag/v1.10.2

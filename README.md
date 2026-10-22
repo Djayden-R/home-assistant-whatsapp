@@ -80,8 +80,13 @@ version 2026.9.1 or newer and leaves ordinary message transport available on
 unsupported backends.
 
 Integration 1.10.1 fixes application-owned poll destination binding and
-compatibility for pending polls saved by the earlier implementation. It does
-not change the consumer API or poll event schema.
+compatibility for pending polls saved by the earlier implementation.
+Integration 1.10.2 normalizes supported GOWS poll-vote timestamps, recovers
+persisted pending settlements after bounded construction or storage retries,
+and preserves saved selections for consumer replay if event delivery is missed.
+Neither release changes the consumer API or poll event schema. The 1.10.2
+release changes only the integration; the HAOS app stays at 0.2.4. Live
+WhatsApp behavior and consumer activation require separate verification.
 
 ## Requirements
 
@@ -594,9 +599,11 @@ rejected before it was journaled is not recreated. Wait for a fresh genuine
 vote or use a supported text/voice response; do not edit stored data or
 synthesize human-origin events. Legacy automation-owned polls are unchanged.
 
-The current unreleased source also normalizes poll vote time before settlement.
-The pinned GOWS webhook uses Unix milliseconds, while existing seconds-style
-examples remain accepted for compatibility. See the
+Integration 1.10.2 also normalizes supported GOWS poll vote time before
+settlement; seconds-style documented examples remain accepted for
+compatibility. Bounded retries recover selected pending settlements after
+construction or storage failures, and saved selections remain available to
+consumer replay if event-bus delivery is missed. See the
 [poll timestamp and recovery note](docs/POLL_SELECTION_RECOVERY.md) for the
-synthetic fixture, persisted-state boundaries, diagnostics and the outstanding
-live verification plan. Source checks do not prove live WhatsApp behavior.
+synthetic fixture, persisted-state boundaries, diagnostics and outstanding
+live verification. Source checks do not prove live WhatsApp behavior.

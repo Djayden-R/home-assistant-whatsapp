@@ -117,9 +117,9 @@ Source validation on 2026-10-21:
   Source tests do not establish that the particular live incident is resolved;
   one genuine vote and its consumer continuation still need live verification.
 
-## Poll timestamp compatibility and settlement recovery (unreleased)
+## Poll timestamp compatibility and settlement recovery 1.10.2
 
-The current source work addresses the pinned GOWS 2026.9.1 poll vote
+Integration **1.10.2** addresses the pinned GOWS 2026.9.1 poll vote
 timestamp: WAHA passes protocol `senderTimestampMS` into numeric
 `poll.vote.vote.timestamp` unchanged. The previous public settlement path
 treated this value as seconds and failed while constructing its UTC event time.
@@ -185,16 +185,26 @@ rounding mismatch between equivalent seconds and milliseconds, and overly
 strong wording about the exact pinned provider implementation. These review
 checks are not live-service verification.
 
-HACS, hassfest, and add-on linter were not run because they are not available
-locally; no hosted workflow was triggered. No live HA/WhatsApp check has been
-performed. Exact pinned private GOWS dependency behavior and precision, a live
-webhook payload, other engines' timestamp units, and live selection/replay
-behavior remain unverified. No version metadata was changed as part of this
-unreleased source work.
+The core validation above ran on 2026-10-21 while integration metadata still
+read 1.10.1; this release-preparation step changes only the integration version
+to 1.10.2. The app remains 0.2.4 with its pinned GOWS 2026.9.1 engine. As of
+the 2026-10-21 source-only validation, hosted HACS, hassfest, and add-on lint
+had not run. Before publication, fresh main CI must pass; no result for that
+future run is claimed here. No live HA/WhatsApp check has been performed. Exact
+pinned private GOWS dependency behavior and precision, a live webhook payload,
+other engines' timestamp units, and live selection/replay behavior remain
+unverified.
 
-After separately authorized activation of the patched release and confirmation
-that the patched code is loaded (the manifest version alone cannot distinguish
-this unreleased source revision), first query selection replay for the same
+The version and lockfile checks for this release are:
+
+```bash
+uv run python scripts/check_version.py v1.10.2
+uv run python scripts/check_version.py waha-v0.2.4
+UV_CACHE_DIR=/private/tmp/hal-poll-uv-check uv lock --check --offline
+```
+
+After separately authorized activation of v1.10.2 and confirmation that the
+release code is loaded, first query selection replay for the same
 conversation from the consumer's last durable sequence. If the original vote
 is present, continue that same pending request and question with its saved
 event identity and vote time, and check for duplicate effects. If no recoverable

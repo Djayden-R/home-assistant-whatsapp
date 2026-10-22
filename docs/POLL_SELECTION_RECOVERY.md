@@ -1,8 +1,9 @@
 # Poll vote timestamp and recovery note
 
-This note documents an **unreleased** compatibility fix for application-owned
-poll settlement. It does not change the poll service or event schema, add
-consumer policy, or establish that the live WhatsApp session was verified.
+This note documents the application-owned poll compatibility fix included in
+integration **1.10.2**. It does not change the poll service or event schema, add
+consumer policy, or establish that the live WhatsApp session was verified. The
+HAOS app remains at 0.2.4 with its existing pinned GOWS 2026.9.1 engine.
 
 ## Timestamp source and compatibility
 
@@ -141,14 +142,18 @@ only the failed phase.
 Validation on 2026-10-21 passed. The author’s focused HA poll/channel run passed
 161 tests. The full HA-runtime suite passed 842 tests; the plain CI-style suite
 passed 764 tests with 28 optional HA skips. The Node suite passed 20 tests.
-Ruff, version consistency (`1.10.1` integration and `0.2.4` app), Python
-compilation, offline lock consistency, Node syntax, JSON fixture and local
+Ruff, version consistency at test time (`1.10.1` integration and `0.2.4` app),
+Python compilation, offline lock consistency, Node syntax, JSON fixture and local
 documentation-link checks, and `git diff --check` passed. The plain suite emits
 an existing aiohttp `NotAppKeyWarning`; the HA-runtime suite additionally emits
 an aiohttp application-inheritance deprecation warning. An initial sandboxed
 plain-suite attempt had 27 local socket permission failures; the authorized
 loopback rerun passed, so those failures were environmental rather than code
 failures.
+
+After the source validation, release metadata and the lockfile were updated to
+integration 1.10.2 and checked against the `v1.10.2` integration and
+`waha-v0.2.4` app version arguments. No app image update is needed.
 
 Independent Astra High A/D and B/C follow-ups finished with no remaining
 actionable findings. Review follow-ups fixed loss of a legacy action after an
@@ -183,21 +188,23 @@ The JSON fixture, its diagnostic aggregate keys, and relative Markdown links
 were checked with a local validation script. The exact focused public regression
 command appears in [`RELEASING.md`](../RELEASING.md).
 
-These are local synthetic and static checks. Hosted HACS, hassfest, and add-on
-linter checks were not run because no hosted workflow was triggered. No live
-Home Assistant session or WhatsApp phone behavior has been tested, and the
-exact pinned private GOWS dependency implementation, numeric precision, live
-webhook payload, and units for other WAHA engine paths remain unverified.
+These are local synthetic and static checks. As of the 2026-10-21 source-only
+validation, hosted HACS, hassfest, and add-on linter checks had not run. Fresh
+main CI must pass before release publication; no result for that run is claimed
+yet. No live Home Assistant session or WhatsApp phone behavior has been tested,
+and the exact pinned private GOWS dependency implementation, numeric precision,
+live webhook payload, and units for other WAHA engine paths remain unverified.
 
-After separate authorization to activate and test, first query selection replay
-from the consumer's last durable sequence for the same conversation. If the
-original vote was durably saved, continue the same pending request and question
-from that event, preserving its event ID, sequence and original vote time, and
-check for duplicate effects. Do not reset or replace the consumer request as a
-recovery shortcut. If no recoverable original vote exists, use a fresh genuine
-tap on the still-supported poll or a supported genuine text/voice answer; never
-fabricate a vote. A separate fresh poll may be used as an optional smoke test.
-No live check has been performed as part of this change.
+After separate authorization to activate and test v1.10.2, first query
+selection replay from the consumer's last durable sequence for the same
+conversation. If the original vote was durably saved, continue the same pending
+request and question from that event, preserving its event ID, sequence and
+original vote time, and check for duplicate effects. Do not reset or replace
+the consumer request as a recovery shortcut. If no recoverable original vote
+exists, use a fresh genuine tap on the still-supported poll or a supported
+genuine text/voice answer; never fabricate a vote. A separate fresh poll may be
+used as an optional smoke test. No live check has been performed as part of
+this change.
 
 ### Copyable consumer handoff
 
@@ -206,7 +213,7 @@ The poll service schema and consumer API are unchanged. A settled genuine vote
 preserves its original vote time; a durably saved selection can be recovered
 with the same event_id and selection_sequence through get_poll_selections.
 Resume the same pending request/question and deduplicate by event identity and
-sequence; do not create a replacement request to recover it. The source change
-is ready for consumer source-compatibility review; activation and live WhatsApp
-proof remain pending separate authorization.
+sequence; do not create a replacement request to recover it. Integration
+v1.10.2 is ready for consumer source-compatibility review; activation and live
+WhatsApp proof remain pending separate authorization.
 ```
