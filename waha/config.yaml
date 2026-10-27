@@ -5,6 +5,7 @@ description: Self-hosted WhatsApp API with a Home Assistant sidebar control pane
 url: https://github.com/sebastian-greco/home-assistant-whatsapp
 image: ghcr.io/sebastian-greco/ha-waha
 arch:
+  - aarch64
   - amd64
 startup: services
 init: false

@@ -91,8 +91,8 @@ WhatsApp behavior and consumer activation require separate verification.
 ## Requirements
 
 - Home Assistant 2026.7 or newer.
-- Home Assistant OS on `amd64` for the included app, or an independently
-  managed WAHA server.
+- Home Assistant OS on `aarch64` or `amd64` for the included app, or an
+  independently managed WAHA server.
 - HACS for the native Home Assistant integration.
 - A dedicated WhatsApp account linked to WAHA as a companion device.
 

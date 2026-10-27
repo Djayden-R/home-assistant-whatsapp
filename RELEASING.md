@@ -13,6 +13,8 @@ Integration releases use `vMAJOR.MINOR.PATCH`. App releases use
 Every push to `main` that changes `waha/` builds and publishes the app image.
 Pull requests build it without publishing. Bump the app version whenever its
 runtime image changes; documentation-only edits do not require a bump.
+Published app tags include both `linux/amd64` and `linux/arm64`
+(`aarch64` in Home Assistant metadata).
 
 ## Release procedure
 

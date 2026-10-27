@@ -35,6 +35,8 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      - uses: docker/setup-qemu-action@v3
+
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -48,7 +50,6 @@ jobs:
           push: false
           tags: ha-waha-smoke:${{ steps.version.outputs.version }}
           build-args: |
-            BUILD_ARCH=amd64
             BUILD_VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -71,13 +72,12 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./waha
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ghcr.io/sebastian-greco/ha-waha:${{ steps.version.outputs.version }}
             ghcr.io/sebastian-greco/ha-waha:latest
           build-args: |
-            BUILD_ARCH=amd64
             BUILD_VERSION=${{ steps.version.outputs.version }}
           labels: |
             io.hass.type=app
