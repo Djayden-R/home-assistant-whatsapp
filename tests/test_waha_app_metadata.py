@@ -18,6 +18,7 @@ def test_app_defaults_are_private() -> None:
 
     assert config["ingress"] is True
     assert config.get("panel_admin", True) is True
+    assert config["arch"] == ["aarch64", "amd64"]
     assert config["ports"]["3000/tcp"] is None
     assert config["options"]["api_key"] is None
     assert config["options"]["download_media"] is False
@@ -37,7 +38,10 @@ def test_app_image_and_upstream_are_version_pinned() -> None:
 
 
 def test_device_name_uses_supervisor_string_schema() -> None:
-    """Length validation belongs in the runtime, not Supervisor's str schema."""
+    """Length validation belongs in the runtime.
+
+    Supervisor uses a generic string schema.
+    """
     config = _config()
     runtime = (APP_DIR / "run.mjs").read_text()
 
