@@ -31,7 +31,7 @@ def test_app_image_and_upstream_are_version_pinned() -> None:
     assert config["version"] == "0.2.4"
     assert config["image"] == "ghcr.io/sebastian-greco/ha-waha"
     assert re.fullmatch(
-        r"FROM devlikeapro/waha:gows-2026\.9\.1@sha256:[a-f0-9]{64}",
+        r"FROM --platform=\$TARGETPLATFORM devlikeapro/waha:gows-2026\.9\.1",
         dockerfile.splitlines()[0],
     )
     assert "ARG BUILD_VERSION=0.2.4" in dockerfile
