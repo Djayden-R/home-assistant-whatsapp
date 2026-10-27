@@ -75,15 +75,15 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/sebastian-greco/ha-waha:${{ steps.version.outputs.version }}
-            ghcr.io/sebastian-greco/ha-waha:latest
+            ghcr.io/djayden-r/ha-waha:${{ steps.version.outputs.version }}
+            ghcr.io/djayden-r/ha-waha:latest
           build-args: |
             BUILD_VERSION=${{ steps.version.outputs.version }}
           labels: |
             io.hass.type=app
             io.hass.name=WAHA for Home Assistant
             io.hass.description=Self-hosted WhatsApp API with a Home Assistant sidebar control panel
-            io.hass.url=https://github.com/sebastian-greco/home-assistant-whatsapp
+            io.hass.url=https://github.com/Djayden-R/home-assistant-whatsapp
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: true
